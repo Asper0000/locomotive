@@ -65,7 +65,7 @@ fn scan_with_metadata(
     for (path, _) in collect_files(lua_dir, FileKind::Lua) {
         let meta = lua_meta::read(&path).unwrap_or_default();
         let stem = file_stem(&path);
-        let app_id = meta.app_id.clone().or_else(|| numeric_stem(&stem));
+        let app_id = numeric_stem(&stem);
         let key = match &app_id {
             Some(id) => format!("app:{id}"),
             None => format!("name:{}", normalized_key(&stem)),

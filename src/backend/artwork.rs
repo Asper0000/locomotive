@@ -15,6 +15,7 @@ struct Lookup {
     entry_index: usize,
     app_id: String,
     needs_name: bool,
+    needs_cover: bool,
     cover_path: Option<PathBuf>,
 }
 
@@ -91,15 +92,24 @@ fn prepare_lookups(
             }
         }
 
-        let cover_path = find_cover(steam_root.as_deref(), app_id)
-            .or_else(|| cached_cover(&cache_dir, app_id));
-        entry.cover_path = cover_path.clone();
+        let local_cover = find_cover(steam_root.as_deref(), app_id);
+        let cached_portrait = cached_portrait(&cache_dir, app_id);
+        let cached_fallback = cached_header(&cache_dir, app_id);
+        let cover_path = cached_portrait
+            .or_else(|| local_cover.clone().filter(|path| !is_header_art(path)))
+            .or(local_cover)
+            .or(cached_fallback);
         let needs_name = entry.name_is_fallback || entry.name == format!("App {app_id}");
-        if needs_name || cover_path.is_none() {
+        // A cached wide banner is only a fallback, not a finished cover lookup:
+        // keep trying for the portrait capsule on subsequent launches.
+        let needs_cover = cover_path.as_deref().is_none_or(is_header_art);
+        entry.cover_path = cover_path.clone();
+        if needs_name || needs_cover {
             lookups.push(Lookup {
                 entry_index,
                 app_id: app_id.to_owned(),
                 needs_name,
+                needs_cover,
                 cover_path,
             });
         }
@@ -115,7 +125,7 @@ fn resolve_lookup(
 ) -> (usize, Option<String>, Option<PathBuf>) {
     let fetch_name = lookup.needs_name
         && !recent_failure(cache_dir, &lookup.app_id, "name", Duration::from_secs(6 * 60 * 60));
-    let fetch_cover = lookup.cover_path.is_none()
+    let fetch_cover = lookup.needs_cover
         && !recent_failure(cache_dir, &lookup.app_id, "cover", Duration::from_secs(24 * 60 * 60));
     let metadata = (fetch_name || fetch_cover)
         .then(|| artwork_remote::fetch_app_metadata(&lookup.app_id))
@@ -137,8 +147,7 @@ fn resolve_lookup(
     };
 
     let downloaded_cover = if fetch_cover {
-        let header_url = metadata.as_ref().and_then(|metadata| metadata.header_image.as_deref());
-        artwork_remote::download_cover(cache_dir, &lookup.app_id, header_url)
+        artwork_remote::download_cover(cache_dir, &lookup.app_id, metadata.as_ref())
     } else {
         None
     };
@@ -152,8 +161,9 @@ fn resolve_lookup(
         }
     }
 
-    let cover_path = lookup.cover_path
-        .or(downloaded_cover)
+    // Prefer a newly downloaded portrait over an older cached header banner.
+    let cover_path = downloaded_cover
+        .or(lookup.cover_path)
         .or_else(|| cached_cover(cache_dir, &lookup.app_id))
         .or_else(|| find_cover(steam_root, &lookup.app_id));
     (lookup.entry_index, name, cover_path)
@@ -170,8 +180,9 @@ fn recent_failure(cache_dir: &Path, app_id: &str, kind: &str, retry_after: Durat
 }
 
 fn failure_marker(cache_dir: &Path, app_id: &str, kind: &str) -> PathBuf {
-    // Versioned markers intentionally bypass misses from the earlier, less reliable CDN lookup.
-    cache_dir.join(format!("{app_id}.{kind}-v2-miss"))
+    // Versioned markers bypass misses from earlier CDN strategies. v4 retries
+    // App IDs whose older lookups could not find portrait or hashed CDN assets.
+    cache_dir.join(format!("{app_id}.{kind}-v4-miss"))
 }
 
 fn read_cached_name(cache_dir: &Path, app_id: &str) -> Option<String> {
@@ -180,18 +191,35 @@ fn read_cached_name(cache_dir: &Path, app_id: &str) -> Option<String> {
     (!name.is_empty() && name.len() < 512).then(|| name.to_owned())
 }
 
-fn cached_cover(cache_dir: &Path, app_id: &str) -> Option<PathBuf> {
+fn cached_portrait(cache_dir: &Path, app_id: &str) -> Option<PathBuf> {
     [
         cache_dir.join(format!("{app_id}.cover.jpg")),
         cache_dir.join(format!("{app_id}.cover.png")),
         cache_dir.join(format!("{app_id}.cover.jpeg")),
         cache_dir.join(format!("{app_id}.jpg")),
+    ]
+    .into_iter()
+    .find(|path| artwork_remote::is_valid_cached_image(path))
+}
+
+fn cached_header(cache_dir: &Path, app_id: &str) -> Option<PathBuf> {
+    [
         cache_dir.join(format!("{app_id}.cover-header.jpg")),
         cache_dir.join(format!("{app_id}.cover-header.png")),
         cache_dir.join(format!("{app_id}.cover-header.jpeg")),
     ]
     .into_iter()
     .find(|path| artwork_remote::is_valid_cached_image(path))
+}
+
+fn cached_cover(cache_dir: &Path, app_id: &str) -> Option<PathBuf> {
+    cached_portrait(cache_dir, app_id).or_else(|| cached_header(cache_dir, app_id))
+}
+
+fn is_header_art(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.to_ascii_lowercase().contains("header"))
 }
 
 fn find_cover(steam_root: Option<&Path>, app_id: &str) -> Option<PathBuf> {
@@ -208,7 +236,7 @@ fn find_cover(steam_root: Option<&Path>, app_id: &str) -> Option<PathBuf> {
     for directory in &directories {
         for suffix in suffixes {
             let path = directory.join(format!("{app_id}{suffix}"));
-            if path.is_file() {
+            if artwork_remote::is_valid_cached_image(&path) {
                 return Some(path);
             }
         }
@@ -231,7 +259,10 @@ fn search_artwork_directory(directory: &Path, depth: usize) -> Option<PathBuf> {
         "library_header.jpg", "header.jpg", "header.png",
     ];
     for filename in preferred {
-        if let Some(path) = entries.iter().find(|path| path.file_name().and_then(|name| name.to_str()) == Some(filename) && path.is_file()) {
+        if let Some(path) = entries.iter().find(|path| {
+            path.file_name().and_then(|name| name.to_str()) == Some(filename)
+                && artwork_remote::is_valid_cached_image(path)
+        }) {
             return Some(path.clone());
         }
     }

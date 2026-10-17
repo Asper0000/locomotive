@@ -41,6 +41,8 @@ pub fn handle(state: &mut State, message: Message) -> Task<Message> {
             state.active_view = view;
             if view == View::Library && !state.is_refreshing_library {
                 start_library_refresh(state)
+            } else if view == View::Options {
+                Task::done(Message::RefreshConfig)
             } else {
                 Task::none()
             }
@@ -198,10 +200,6 @@ pub fn handle(state: &mut State, message: Message) -> Task<Message> {
             state.manifest_dir = path;
             Task::none()
         }
-        Message::LuaDirChanged(path) => {
-            state.lua_dir = path;
-            Task::none()
-        }
         Message::BrowseManifestDir => choose_storage_dir(StorageKind::Manifest),
         Message::BrowseLuaDir => choose_storage_dir(StorageKind::Lua),
         Message::StorageDirectoryChosen(kind, result) => match result {
@@ -231,6 +229,212 @@ pub fn handle(state: &mut State, message: Message) -> Task<Message> {
             }
             Err(error) => show_notice(state, error),
         },
+        // --- Options / Config Status Bar ---
+        Message::LuaDirDraftChanged(path) => {
+            state.lua_dir_draft = path;
+            Task::none()
+        }
+        Message::CreateDefaultConfig => {
+            let Some(root) = crate::backend::steam::discover_root() else {
+                return show_notice(state, "Could not find Steam root. Make sure Steam is installed.");
+            };
+            let config_path = root.join("rustytools.toml");
+            let default_toml = r#"# rustytools.toml - rusty_tools configuration
+# Place at: <Steam>/rustytools.toml
+# Loaded at startup; hot-reloaded on changes.
+
+[log]
+# Per-module log level. Valid: trace, debug, info, warn, error
+level = "debug"
+
+[manifest]
+url = "opensteamtool"
+timeout_resolve_ms = 5000
+timeout_connect_ms = 5000
+timeout_send_ms    = 10000
+timeout_recv_ms    = 10000
+
+[donate]
+enabled = true
+
+[stats]
+enable_api = true
+
+[update]
+enabled = false
+
+[lua]
+# paths = ["D:/my-steam-config/lua"]
+
+[tokeer]
+register_scheme = false
+
+[remote]
+# url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
+"#;
+            if let Err(e) = std::fs::write(&config_path, default_toml) {
+                return show_notice(state, format!("Failed to create config: {}", e));
+            }
+            state.config_exists = true;
+            show_notice(state, "Created rustytools.toml successfully.")
+        }
+        Message::SetupInstall => {
+            if let Some(root) = &state.steam_root {
+                state.setup_progress = Some(0.0);
+                state.setup_error = None;
+                Task::stream(crate::backend::setup::download_and_install(root.clone()))
+            } else {
+                Task::none()
+            }
+        }
+        Message::SetupProgress(p) => {
+            state.setup_progress = Some(p);
+            Task::none()
+        }
+        Message::SetupFinished(res) => {
+            match res {
+                Ok(_) => {
+                    state.rustytools_installed = true;
+                    state.setup_progress = Some(1.0);
+                    state.steam_was_running = crate::backend::setup::is_steam_running();
+                    Task::none()
+                }
+                Err(e) => {
+                    state.setup_error = Some(e);
+                    state.setup_progress = None;
+                    Task::none()
+                }
+            }
+        }
+        Message::RestartSteam => {
+            crate::backend::setup::restart_steam();
+            state.active_view = View::Import;
+            Task::none()
+        }
+        Message::RemoveRustyTools => {
+            if let Some(root) = &state.steam_root {
+                if crate::backend::setup::is_steam_running() {
+                    return show_notice(state, "Please close Steam before removing RustyTools.");
+                }
+                
+                match crate::backend::setup::remove_rustytools(root) {
+                    Ok(_) => {
+                        state.rustytools_installed = false;
+                        show_notice(state, "RustyTools has been removed from your Steam directory.")
+                    }
+                    Err(e) => show_notice(state, e),
+                }
+            } else {
+                Task::none()
+            }
+        }
+        Message::RefreshConfig => {
+            let Some(root) = crate::backend::steam::discover_root() else {
+                return Task::none();
+            };
+            let config_path = root.join("rustytools.toml");
+            state.config_exists = config_path.exists();
+            
+            if state.config_exists {
+                if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    let mut in_lua = false;
+                    let mut new_lua_dir = None;
+                    
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                            in_lua = trimmed == "[lua]";
+                        } else if in_lua && trimmed.starts_with("dir") {
+                            if let Some(eq) = trimmed.find('=') {
+                                let val = trimmed[eq + 1..].trim().trim_matches('"').replace("\\\\", "\\");
+                                if !val.is_empty() {
+                                    new_lua_dir = Some(val);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if let Some(dir) = new_lua_dir {
+                        state.lua_dir = dir.clone();
+                        state.lua_dir_draft = dir;
+                    } else {
+                        state.lua_dir = format!("{}\\config\\stplug-in", root.display());
+                        state.lua_dir_draft = state.lua_dir.clone();
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::SaveLuaDir => {
+            let Some(root) = crate::backend::steam::discover_root() else {
+                return show_notice(state, "Could not find Steam root.");
+            };
+            let config_path = root.join("rustytools.toml");
+            
+            let toml_str = match std::fs::read_to_string(&config_path) {
+                Ok(s) => s,
+                Err(e) => return show_notice(state, format!("Failed to read config: {}", e)),
+            };
+
+            let draft = state.lua_dir_draft.trim();
+            
+            let lines: Vec<&str> = toml_str.lines().collect();
+            let mut new_lines = Vec::new();
+            let mut in_lua_section = false;
+            let mut found_dir = false;
+
+            for line in lines {
+                let trimmed = line.trim();
+                if trimmed == "[lua]" {
+                    in_lua_section = true;
+                    new_lines.push(line.to_string());
+                } else if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                    in_lua_section = false;
+                    new_lines.push(line.to_string());
+                } else if in_lua_section && trimmed.starts_with("dir") {
+                    if !draft.is_empty() {
+                        new_lines.push(format!("dir = \"{}\"", draft.replace("\\", "\\\\")));
+                    }
+                    found_dir = true;
+                } else {
+                    new_lines.push(line.to_string());
+                }
+            }
+
+            if !found_dir && !draft.is_empty() {
+                let mut has_lua = false;
+                for line in &new_lines {
+                    if line.trim() == "[lua]" {
+                        has_lua = true;
+                        break;
+                    }
+                }
+                if !has_lua {
+                    new_lines.push("[lua]".to_string());
+                }
+                
+                let mut insert_idx = new_lines.len();
+                for (i, line) in new_lines.iter().enumerate() {
+                    if line.trim() == "[lua]" {
+                        insert_idx = i + 1;
+                        break;
+                    }
+                }
+                new_lines.insert(insert_idx, format!("dir = \"{}\"", draft.replace("\\", "\\\\")));
+            }
+
+            let mut result = new_lines.join("\n");
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+
+            if let Err(e) = std::fs::write(&config_path, result) {
+                return show_notice(state, format!("Failed to save config: {}", e));
+            }
+            
+            state.lua_dir = draft.to_string();
+            show_notice(state, "Lua directory updated.")
+        }
     }
 }
 

@@ -16,9 +16,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct LuaMeta {
-    /// Value of the first single-argument `addappid` call, if present.
-    pub app_id: Option<String>,
-    /// Values of every three-argument `addappid` call.
+    /// Values of every `addappid` call. Includes the base game and all DLCs.
     pub depots: Vec<String>,
 }
 
@@ -72,12 +70,7 @@ pub(crate) fn parse(text: &str) -> LuaMeta {
 
         let args: Vec<&str> = args_str.split(',').map(str::trim).collect();
         match args.len() {
-            1 => {
-                if meta.app_id.is_none() && is_digits(args[0]) {
-                    meta.app_id = Some(args[0].to_owned());
-                }
-            }
-            3 => {
+            1 | 3 => {
                 if is_digits(args[0]) {
                     meta.depots.push(args[0].to_owned());
                 }
@@ -105,23 +98,20 @@ mod tests {
             addappid(2651280)
         "#;
         let meta = parse(source);
-        assert_eq!(meta.app_id.as_deref(), Some("2651280"));
-        assert_eq!(meta.depots, vec!["2651281"]);
+        assert_eq!(meta.depots, vec!["2651281", "2651280"]);
     }
 
     #[test]
     fn handles_many_depots_and_whitespace() {
         let source = "addappid( 100 )\naddappid( 200 , 0 , \"a\" )\naddappid(300,0,\"b\")";
         let meta = parse(source);
-        assert_eq!(meta.app_id.as_deref(), Some("100"));
-        assert_eq!(meta.depots, vec!["200", "300"]);
+        assert_eq!(meta.depots, vec!["100", "200", "300"]);
     }
 
     #[test]
     fn ignores_other_function_calls() {
         let source = "setManifestid(999,\"1\")\naddtoken(1,\"2\")\naddappid(42)";
         let meta = parse(source);
-        assert_eq!(meta.app_id.as_deref(), Some("42"));
-        assert!(meta.depots.is_empty());
+        assert_eq!(meta.depots, vec!["42"]);
     }
 }

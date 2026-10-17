@@ -13,7 +13,8 @@ use super::steam;
 use std::os::windows::process::CommandExt;
 
 const CONNECT_TIMEOUT: &str = "2";
-const REQUEST_TIMEOUT: &str = "4";
+const REQUEST_TIMEOUT: &str = "6";
+const IMAGE_TIMEOUT: &str = "3";
 
 /// Minimal metadata needed to show a title and an image without an API key.
 #[derive(Debug, Clone)]
@@ -22,6 +23,10 @@ pub(crate) struct AppMetadata {
     pub name: Option<String>,
     /// Official landscape header-art URL supplied by the Store API.
     pub header_image: Option<String>,
+    /// Store capsule image URLs used if library artwork is unavailable.
+    pub capsule_image: Option<String>,
+    /// Older Store capsule image URL exposed alongside `capsule_image`.
+    pub capsule_image_v5: Option<String>,
 }
 
 /// Looks up a name and its official Store header image from an App ID.
@@ -39,6 +44,14 @@ pub(crate) fn fetch_app_metadata(app_id: &str) -> Option<AppMetadata> {
         .as_deref()
         .and_then(|body| json_string_for_key(body, "header_image"))
         .filter(|url| is_steam_image_url(url));
+    let capsule_image = store_body
+        .as_deref()
+        .and_then(|body| json_string_for_key(body, "capsule_image"))
+        .filter(|url| is_steam_image_url(url));
+    let capsule_image_v5 = store_body
+        .as_deref()
+        .and_then(|body| json_string_for_key(body, "capsule_imagev5"))
+        .filter(|url| is_steam_image_url(url));
 
     // Some App IDs do not have a useful Store page (for example tools or
     // dedicated-server entries). SteamCMD's public app-info service provides
@@ -51,7 +64,13 @@ pub(crate) fn fetch_app_metadata(app_id: &str) -> Option<AppMetadata> {
             .filter(|name| !name.is_empty() && name.len() < 512);
     }
 
-    (name.is_some() || header_image.is_some()).then_some(AppMetadata { name, header_image })
+    (name.is_some() || header_image.is_some() || capsule_image.is_some() || capsule_image_v5.is_some())
+        .then_some(AppMetadata {
+            name,
+            header_image,
+            capsule_image,
+            capsule_image_v5,
+        })
 }
 
 fn fetch_json(url: &str, maximum_size: usize) -> Option<String> {
@@ -74,59 +93,92 @@ fn fetch_json(url: &str, maximum_size: usize) -> Option<String> {
     String::from_utf8(output.stdout).ok()
 }
 
-/// Downloads official Store artwork first, with library-capsule fallbacks for portrait art.
+/// Downloads portrait library artwork first, then uses other Store artwork as a fallback.
 pub(crate) fn download_cover(
     cache_dir: &Path,
     app_id: &str,
-    header_image: Option<&str>,
+    metadata: Option<&AppMetadata>,
 ) -> Option<PathBuf> {
+    // A previous build may have cached a wide header banner. Do not let it stop
+    // us from trying the actual portrait library capsule.
     for extension in ["jpg", "png", "jpeg"] {
         let cached = cache_dir.join(format!("{app_id}.cover.{extension}"));
         if is_image_file(&cached, extension) {
             return Some(cached);
         }
     }
-    for extension in ["jpg", "png", "jpeg"] {
-        let cached_header = cache_dir.join(format!("{app_id}.cover-header.{extension}"));
-        if is_image_file(&cached_header, extension) {
-            return Some(cached_header);
+
+    let header_image = metadata.and_then(|metadata| metadata.header_image.as_deref());
+
+    // Newer Steam images can live in app-ID/hash/asset.jpg paths. The Store API
+    // gives us the exact header URL, so try portrait files beside that image.
+    if let Some(url) = header_image.filter(|url| is_steam_image_url(url)) {
+        for filename in ["library_600x900_2x.jpg", "library_600x900.jpg"] {
+            if let Some(candidate) = sibling_asset_url(url, filename) {
+                if let Some(path) = download_image(cache_dir, app_id, &candidate, "jpg", false) {
+                    return Some(path);
+                }
+            }
         }
     }
 
-    // Prefer the exact image URL returned by the Store API. This is the most
-    // reliable current URL for an App ID; probing several guessed portrait CDN
-    // URLs first made name-and-art updates appear to stall for unavailable IDs.
-    if let Some(url) = header_image.filter(|url| is_steam_image_url(url)) {
+    // Try a small set of current and legacy AppID-only paths. Keeping this list
+    // short avoids a long silent wait when an App ID has no portrait artwork.
+    let candidates = [
+        format!("https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{app_id}/library_600x900_2x.jpg"),
+        format!("https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{app_id}/library_600x900.jpg"),
+        format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/library_600x900.jpg"),
+        format!("https://steamcdn-a.akamaihd.net/steam/apps/{app_id}/library_600x900.jpg"),
+    ];
+
+    for url in candidates {
+        if let Some(path) = download_image(cache_dir, app_id, &url, "jpg", false) {
+            return Some(path);
+        }
+    }
+
+    // A portrait is not available for every App ID. Try exact Store image URLs
+    // next so even games without library capsules can still show official art.
+    for url in [
+        header_image,
+        metadata.and_then(|metadata| metadata.capsule_image.as_deref()),
+        metadata.and_then(|metadata| metadata.capsule_image_v5.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|url| is_steam_image_url(url))
+    {
         let extension = image_extension(url).unwrap_or("jpg");
         if let Some(path) = download_image(cache_dir, app_id, url, extension, true) {
             return Some(path);
         }
     }
 
-    // If the API image is unavailable, try the current shared Steam static
-    // library capsule endpoint, then a small set of legacy-compatible variants.
-    let candidates = [
-        (format!("https://shared.steamstatic.com/store_item_assets/steam/apps/{app_id}/library_600x900_2x.jpg"), "jpg"),
-        (format!("https://shared.steamstatic.com/store_item_assets/steam/apps/{app_id}/library_600x900.jpg"), "jpg"),
-        (format!("https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/library_600x900.jpg"), "jpg"),
-        (format!("https://shared.steamstatic.com/store_item_assets/steam/apps/{app_id}/library_600x900.png"), "png"),
-    ];
-
-    for (url, extension) in candidates {
-        if let Some(path) = download_image(cache_dir, app_id, &url, extension, false) {
-            return Some(path);
-        }
-    }
-
+    // Last resort for App IDs whose Store response lacks artwork metadata.
     for url in [
-        format!("https://shared.steamstatic.com/store_item_assets/steam/apps/{app_id}/header.jpg"),
-        format!("https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/header.jpg"),
+        format!("https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{app_id}/header.jpg"),
+        format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/header.jpg"),
     ] {
         if let Some(path) = download_image(cache_dir, app_id, &url, "jpg", true) {
             return Some(path);
         }
     }
+
+    // If all remote requests fail but an old header is cached, keep displaying
+    // it rather than replacing artwork with an empty tile.
+    for extension in ["jpg", "png", "jpeg"] {
+        let cached_header = cache_dir.join(format!("{app_id}.cover-header.{extension}"));
+        if is_image_file(&cached_header, extension) {
+            return Some(cached_header);
+        }
+    }
     None
+}
+
+fn sibling_asset_url(image_url: &str, filename: &str) -> Option<String> {
+    let clean_url = image_url.split(|character| character == '?' || character == '#').next()?;
+    let (directory, _) = clean_url.rsplit_once('/')?;
+    Some(format!("{directory}/{filename}"))
 }
 
 fn download_image(
@@ -158,7 +210,9 @@ fn download_image(
         "--connect-timeout",
         CONNECT_TIMEOUT,
         "--max-time",
-        REQUEST_TIMEOUT,
+        IMAGE_TIMEOUT,
+        "--header",
+        "User-Agent: Locomotive/0.0.1",
         "--output",
         &temporary_path,
         url,
@@ -241,4 +295,26 @@ fn run_curl<const N: usize>(arguments: [&str; N]) -> Option<Output> {
     #[cfg(target_os = "windows")]
     command.creation_flags(steam::CREATE_NO_WINDOW);
     command.output().ok().filter(|output| output.status.success())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{image_extension, is_steam_image_url, sibling_asset_url};
+
+    #[test]
+    fn portrait_lookup_reuses_hashed_store_asset_directory() {
+        let url = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/12345/abc987/header.jpg?t=123";
+        assert_eq!(
+            sibling_asset_url(url, "library_600x900.jpg").as_deref(),
+            Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/12345/abc987/library_600x900.jpg"),
+        );
+    }
+
+    #[test]
+    fn steam_image_urls_can_include_cache_busters() {
+        let url = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/12345/header.jpg?t=123";
+        assert!(is_steam_image_url(url));
+        assert_eq!(image_extension(url), Some("jpg"));
+    }
 }

@@ -128,6 +128,17 @@ pub fn nav_button(
     .into()
 }
 
+
+/// A consistent page title and divider. The subtitle belongs immediately below this block.
+pub fn page_header(title: &'static str, size: f32) -> Element<'static, Message> {
+    iced::widget::column![
+        text(title).size(size).color(theme::TEXT_PRIMARY),
+        separator(),
+    ]
+    .spacing(10)
+    .into()
+}
+
 /// A small all-caps label used to separate groups in the sidebar.
 pub fn section_label(label: &'static str) -> Element<'static, Message> {
     container(text(label).size(10).color(theme::TEXT_MUTED))
@@ -175,9 +186,21 @@ pub fn danger_button(label: &'static str, message: Message) -> Element<'static, 
 
 /// A compact square help control for contextual guidance that should stay out of the way.
 pub fn help_button(message: Message) -> Element<'static, Message> {
-    button(text("?").size(14))
-        .width(Length::Fixed(28.0))
-        .height(Length::Fixed(28.0))
+    button(
+        container(
+            text("?")
+                .size(14)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill),
+    )
+        .width(Length::Fixed(30.0))
+        .height(Length::Fixed(30.0))
         .padding(0)
         .on_press(message)
         .style(|_theme: &Theme, status| {
@@ -246,6 +269,40 @@ pub fn primary_button(label: &'static str, message: Message) -> Element<'static,
             }
         })
         .into()
+}
+
+/// A primary action with a predictable width, useful in modal footers.
+pub fn primary_button_sized(
+    label: &'static str,
+    message: Message,
+    width: f32,
+    height: f32,
+) -> Element<'static, Message> {
+    button(
+        container(text(label).size(12))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fixed(width))
+    .height(Length::Fixed(height))
+    .padding(0)
+    .on_press(message)
+    .style(|_theme: &Theme, status| {
+        let hovered = matches!(status, button::Status::Hovered);
+        button::Style {
+            background: Some((if hovered { theme::TEXT_PRIMARY } else { theme::ACCENT }).into()),
+            text_color: theme::BG_BASE,
+            border: Border {
+                color: theme::ACCENT,
+                width: 1.0,
+                radius: theme::CORNER_RADIUS.into(),
+            },
+            ..button::Style::default()
+        }
+    })
+    .into()
 }
 
 /// A bordered panel used to group related controls.

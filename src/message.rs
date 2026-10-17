@@ -66,8 +66,6 @@ pub enum Message {
 
     /// Update the manifest storage path field.
     ManifestDirChanged(String),
-    /// Update the Lua storage path field.
-    LuaDirChanged(String),
     /// Open a folder picker for manifest storage.
     BrowseManifestDir,
     /// Open a folder picker for Lua storage.
@@ -76,4 +74,19 @@ pub enum Message {
     StorageDirectoryChosen(StorageKind, Result<Option<PathBuf>, String>),
     /// Validate and persist both storage folders.
     SaveStoragePaths,
+
+    // --- Options / Config Status Bar ---
+    /// User clicked to generate the default rustytools.toml
+    CreateDefaultConfig,
+    /// Update the draft text for the Lua directory input box
+    LuaDirDraftChanged(String),
+    /// Save the updated Lua directory to the TOML file
+    SaveLuaDir,
+    /// Re-read the rustytools.toml file from disk.
+    RefreshConfig,
+    SetupInstall,
+    SetupProgress(f32),
+    SetupFinished(Result<(), String>),
+    RestartSteam,
+    RemoveRustyTools,
 }

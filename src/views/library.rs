@@ -1,5 +1,8 @@
 //! Compact game cards with progressive disclosure for stored manifests and Lua files.
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use iced::widget::{column, container, image, row, scrollable, text, Space};
 use iced::{Alignment, Border, Element, Length, Padding};
 
@@ -8,13 +11,11 @@ use crate::state::{State, library_state::LibraryEntry};
 use crate::theme;
 use crate::views::components;
 
+static COVER_HANDLES: OnceLock<Mutex<HashMap<(std::path::PathBuf, u32, u32), image::Handle>>> = OnceLock::new();
+
 /// Renders the local library and its removal confirmation states.
 pub fn view(state: &State) -> Element<'_, Message> {
-    let header = column![
-        text("Library").size(20).color(theme::TEXT_PRIMARY),
-        components::separator(),
-    ]
-    .spacing(10);
+    let header = components::page_header("Library", 20.0);
 
     let mut body = column![
         header,
@@ -144,7 +145,7 @@ fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'st
 
     container(content)
         .width(Length::Fill)
-        .padding(Padding { top: 11.0, right: 12.0, bottom: 11.0, left: 12.0 })
+        .padding(Padding { top: 12.0, right: 16.0, bottom: 12.0, left: 12.0 })
         .style(move |_theme| container::Style {
             background: Some(if confirm { theme::BG_ELEVATED } else { theme::BG_SURFACE }.into()),
             border: Border {
@@ -159,15 +160,14 @@ fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'st
 
 fn cover_art(path: Option<std::path::PathBuf>, name: &str) -> Element<'static, Message> {
     let landscape = path.as_deref().is_some_and(is_landscape_art);
-    let slot_width = if landscape { 88.0 } else { 56.0 };
-    let image_height = if landscape { 50.0 } else { 76.0 };
+    let (slot_width, slot_height) = if landscape { (102.0, 48.0) } else { (54.0, 72.0) };
 
-    let artwork: Element<'static, Message> = if let Some(path) = path {
-        image::Image::new(image::Handle::from_path(path))
+    if let Some(path) = path {
+        let handle = cached_cover_handle(path, slot_width as u32, slot_height as u32);
+        image::Image::new(handle)
             .width(Length::Fixed(slot_width))
-            .height(Length::Fixed(image_height))
+            .height(Length::Fixed(slot_height))
             .content_fit(iced::ContentFit::Cover)
-            .border_radius(5.0)
             .into()
     } else {
         let initial = name
@@ -175,26 +175,100 @@ fn cover_art(path: Option<std::path::PathBuf>, name: &str) -> Element<'static, M
             .next()
             .map(|character| character.to_uppercase().to_string())
             .unwrap_or_else(|| "?".to_owned());
-        container(text(initial).size(22).color(theme::TEXT_SECONDARY))
-            .width(Length::Fixed(56.0))
-            .height(Length::Fixed(76.0))
+        container(text(initial).size(20).color(theme::TEXT_SECONDARY))
+            .width(Length::Fixed(slot_width))
+            .height(Length::Fixed(slot_height))
             .center_x(Length::Fill)
             .center_y(Length::Fill)
             .style(|_theme| container::Style {
                 background: Some(theme::BG_ELEVATED.into()),
-                border: Border { color: theme::BORDER_SUBTLE, width: 1.0, radius: 5.0.into() },
+                border: Border {
+                    color: theme::BORDER_SUBTLE,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
                 ..Default::default()
             })
             .into()
-    };
-
-    container(artwork)
-        .width(Length::Fixed(slot_width))
-        .height(Length::Fixed(76.0))
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
+    }
 }
+
+fn cached_cover_handle(path: std::path::PathBuf, width: u32, height: u32) -> image::Handle {
+    let cache = COVER_HANDLES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut handles = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    
+    let key = (path.clone(), width, height);
+    if let Some(handle) = handles.get(&key) {
+        return handle.clone();
+    }
+    
+    let handle = match ::image::open(&path) {
+        Ok(img) => {
+            // 1. Smoothly scale the image down to the exact slot size
+            let img = img.resize_exact(width, height, ::image::imageops::FilterType::Lanczos3);
+            let mut rgba = img.to_rgba8();
+            
+            // 2. Manually apply the rounded corner mask with Anti-Aliasing
+            let fw = width as f32;
+            let fh = height as f32;
+            let radius = 6.0_f32.min(fw / 2.0).min(fh / 2.0);
+            
+            for y in 0..height {
+                for x in 0..width {
+                    let fx = x as f32 + 0.5; // Pixel center X
+                    let fy = y as f32 + 0.5; // Pixel center Y
+                    
+                    let mut alpha_multiplier = 1.0_f32;
+                    
+                    // Top-Left corner
+                    if fx < radius && fy < radius {
+                        let dist = ((fx - radius).powi(2) + (fy - radius).powi(2)).sqrt();
+                        alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
+                    } 
+                    // Top-Right corner
+                    else if fx > fw - radius && fy < radius {
+                        let dist = ((fx - (fw - radius)).powi(2) + (fy - radius).powi(2)).sqrt();
+                        alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
+                    } 
+                    // Bottom-Left corner
+                    else if fx < radius && fy > fh - radius {
+                        let dist = ((fx - radius).powi(2) + (fy - (fh - radius)).powi(2)).sqrt();
+                        alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
+                    } 
+                    // Bottom-Right corner
+                    else if fx > fw - radius && fy > fh - radius {
+                        let dist = ((fx - (fw - radius)).powi(2) + (fy - (fh - radius)).powi(2)).sqrt();
+                        alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
+                    }
+                    
+                    if alpha_multiplier < 1.0 {
+                        let pixel = rgba.get_pixel_mut(x, y);
+                        // Blend the calculated smooth edge with the existing alpha channel
+                        pixel.0[3] = (pixel.0[3] as f32 * alpha_multiplier) as u8;
+                    }
+                }
+            }
+            
+            image::Handle::from_rgba(width, height, rgba.into_raw())
+        }
+        Err(_) => {
+            // Fallback if image fails to load
+            let mut rgba = vec![0u8; (width * height * 4) as usize];
+            for i in 0..(width * height) {
+                rgba[i as usize * 4] = 30;
+                rgba[i as usize * 4 + 1] = 30;
+                rgba[i as usize * 4 + 2] = 30;
+                rgba[i as usize * 4 + 3] = 255;
+            }
+            image::Handle::from_rgba(width, height, rgba)
+        }
+    };
+    
+    handles.insert(key, handle.clone());
+    handle
+}
+
+
 
 fn is_landscape_art(path: &std::path::Path) -> bool {
     path.file_name()

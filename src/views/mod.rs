@@ -6,10 +6,11 @@ pub mod components;
 pub mod dropzone;
 pub mod library;
 pub mod options;
+pub mod setup;
 pub mod sidebar;
 pub mod titlebar;
 
-use iced::widget::{column, container, row};
+use iced::widget::{column, container, row, stack};
 use iced::window::Direction;
 use iced::{Element, Length};
 
@@ -40,14 +41,23 @@ pub fn root(state: &State) -> Element<'_, Message> {
         ],
     ];
 
-    container(bordered)
+    let window_content: Element<'_, Message> = container(bordered)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_theme| container::Style {
             background: Some(theme::BG_BASE.into()),
             ..Default::default()
         })
-        .into()
+        .into();
+
+    if state.storage_guide_open {
+        stack![window_content, options::storage_guide_overlay()]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        window_content
+    }
 }
 
 fn resize_handle(
@@ -87,6 +97,7 @@ fn content(state: &State) -> Element<'_, Message> {
         View::Import => dropzone::view(state),
         View::Library => library::view(state),
         View::Options => options::view(state),
+        View::Setup => setup::view(state),
         View::About => about::view(state),
     }
 }

@@ -45,15 +45,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }
     });
 
-    let header = column![
-        text("Import files").size(20).color(theme::TEXT_PRIMARY),
-        components::separator(),
-    ]
-    .spacing(10);
+    let header = components::page_header("Import files", 20.0);
 
     let mut body = column![
         header,
-        Space::new().height(Length::Fixed(4.0)),
+        Space::new().height(Length::Fixed(7.0)),
         text("Stage files, check their types, then copy them into your local library.")
             .size(12)
             .color(theme::TEXT_SECONDARY),

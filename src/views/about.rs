@@ -13,13 +13,12 @@ use crate::views::components;
 /// Renders application details and build information.
 pub fn view(_state: &State) -> Element<'_, Message> {
     let header = column![
-        text(APP_NAME).size(24).color(theme::TEXT_PRIMARY),
+        components::page_header(APP_NAME, 20.0),
         text(format!("Version {}", APP_VERSION))
             .size(12)
             .color(theme::TEXT_SECONDARY),
-        components::separator(),
     ]
-    .spacing(4);
+    .spacing(7);
 
     let description = components::card(
         column![

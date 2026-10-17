@@ -13,6 +13,7 @@ pub mod library_state;
 /// A screen in the application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
+    Setup,
     /// File import and staging.
     #[default]
     Import,
@@ -91,10 +92,23 @@ pub struct State {
     pub advanced_open: bool,
     /// Whether the contextual storage guide dialog is visible.
     pub storage_guide_open: bool,
+    pub rustytools_installed: bool,
+    pub steam_root: Option<PathBuf>,
+    pub setup_progress: Option<f32>,
+    pub setup_error: Option<String>,
+    pub steam_was_running: bool,
+
     /// Folder where manifest copies are stored.
     pub manifest_dir: String,
     /// Folder where Lua copies are stored.
     pub lua_dir: String,
+    
+    // --- Config Editing State ---
+    /// Whether the rustytools.toml config file currently exists in the Steam root.
+    pub config_exists: bool,
+    /// The in-progress text input for the Lua directory.
+    pub lua_dir_draft: String,
+
     /// Snapshot reconstructed from the configured local library folders.
     pub library: library_state::LibrarySnapshot,
     /// A transient status or error message displayed by the UI.
@@ -117,14 +131,33 @@ impl Default for State {
     fn default() -> Self {
         let settings = archive::load_settings();
         let snapshot = library::scan(&settings.manifest_dir, &settings.lua_dir);
+        let lua_dir_str = settings.lua_dir.to_string_lossy().into_owned();
+        
+        let config_exists = crate::backend::steam::discover_root()
+            .map(|root| root.join("rustytools.toml").exists())
+            .unwrap_or(false);
+        
+        let steam_root = crate::backend::steam::discover_root();
+        let rustytools_installed = steam_root.as_ref().map_or(false, |r| crate::backend::setup::is_installed(r));
+        let active_view = if rustytools_installed { View::Import } else { View::Setup };
+
         Self {
-            active_view: View::Import,
+            active_view,
+            rustytools_installed,
+            steam_root,
+            setup_progress: None,
+            setup_error: None,
+            steam_was_running: false,
             pending_files: Vec::new(),
             is_drag_over: false,
             advanced_open: false,
             storage_guide_open: false,
             manifest_dir: settings.manifest_dir.to_string_lossy().into_owned(),
-            lua_dir: settings.lua_dir.to_string_lossy().into_owned(),
+            lua_dir: lua_dir_str.clone(),
+            
+            config_exists,
+            lua_dir_draft: lua_dir_str,
+
             library: snapshot,
             notice: None,
             confirm_remove: None,

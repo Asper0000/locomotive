@@ -207,8 +207,10 @@ fn is_rejected_steam_path(path: &Path) -> bool {
     if is_stplug_in(path) || is_depotcache(path) {
         return false;
     }
+    // Block writing directly inside steamapps (protects game files)
+    // but allow custom folders elsewhere in the Steam directory (e.g. config/lua).
     path.ancestors().any(|ancestor| {
-        ancestor.join("steamapps").is_dir() && ancestor.join("config").is_dir()
+        ancestor.join("steamapps").is_dir() && ancestor.file_name().and_then(|n| n.to_str()) == Some("steamapps")
     })
 }
 

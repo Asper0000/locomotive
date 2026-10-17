@@ -42,11 +42,14 @@ build by hand if you need to debug one of them.
 Locomotive uses local Steam metadata and artwork caches first. To fill in
 missing game names and download cover images automatically, it also needs an
 internet connection and `curl`. It queries the public Steam Store App Details
-endpoint first, uses the public SteamCMD app-info API as a name fallback, and
-uses the image URL returned by Steam before trying other Steam CDN artwork.
-This is optional: the app and its build do not fail when `curl` is missing, but
-unknown AppIDs will keep their fallback name and uncached covers will remain
-blank. PNG and JPEG cover images are supported.
+endpoint first and uses the public SteamCMD app-info API as a name fallback.
+For artwork, it tries portrait library covers first, including images in newer
+hash-based Steam CDN folders when that path can be derived from the Store image
+URL. If a portrait is not published, it falls back to official Store capsule or
+header images. This is optional: the app and its build do not fail when `curl` is missing, but unknown
+AppIDs may keep their fallback name and placeholder artwork. PNG and JPEG
+cover images are supported. Older cached lookup failures are retried after the
+artwork lookup strategy changes.
 
 - **Windows:** modern Windows versions usually include `curl.exe`; otherwise
   install it with `winget install --id cURL.cURL -e`.

@@ -1,9 +1,17 @@
+0.0.1 Alpha — Library presentation and help guide
+- Centered the help glyph with explicit text alignment and gave the confirmation button a fixed, centered layout.
+- Reworked the Storage guide into shorter plain-language sections, clear folder cards, and separated action explanations inside a full-window dialog.
+- Standardized page title size, separators, and subtitle spacing across Import, Library, Options, and About.
+- Improved cover discovery for Steam's portrait library art, including hashed asset folders derived from the Store's official image URL.
+- Added Store capsule artwork fallbacks, additional public Steam CDN hosts, and a new failure-cache version so earlier missing-art attempts are retried.
+- Ensured a newly downloaded portrait cover replaces an older cached header image.
+
 2026-10-17 — Align page headers and restore App ID metadata and cover lookups
 - Matched the Library and Import header-to-separator spacing to Options, and aligned the Library Refresh button with the right inset used by the scrollable game cards.
 - Replaced the persistent Storage guide card with a compact square `?` control and a scrollable modal explaining folder destinations, file grouping, imports, refreshes, deletion, and optional online metadata.
 - Tracked whether a game name is only a filename-derived fallback. Entries with a known App ID now continue to request the real Steam Store name even when the Lua filename itself looks meaningful.
 - Updated cover lookup for Steam's hashed local library-cache directories, current shared Steam static asset hosts, PNG/JPEG candidates, and the official header-image URL returned by the Store API. The returned image is tried first to avoid unnecessary failed CDN probes; the public SteamCMD app-info API is a name fallback for IDs without a useful Store result. Horizontal header art uses a wider tile instead of being aggressively cropped, and image signatures are checked before caching.
-- Versioned failed-lookup markers so past failures from the earlier CDN logic do not block retries for six or twenty-four hours after this update. Reused valid images from the previous cache format while ignoring cached files with invalid image signatures.
+- Versioned failed-lookup markers so past failures from the earlier CDN logic do not block retries after this update. Reused valid images from the previous cache format while ignoring cached files with invalid image signatures.
 
 2026-10-17 — Fix Windows build entry point and lockfile reconciliation
 - Added BUILD_WINDOWS.bat for Command Prompt users. It launches BUILD_WINDOWS.ps1 through Windows PowerShell explicitly, avoids opening the .ps1 file in its associated editor, passes build-mode arguments through, and preserves the process exit code.
