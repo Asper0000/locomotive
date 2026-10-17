@@ -1,0 +1,69 @@
+//! Types representing the manager's filesystem-backed local library.
+
+use std::path::PathBuf;
+
+use super::FileKind;
+
+/// A supported file stored in one of the configured local library folders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryFile {
+    /// Full path to the stored copy.
+    pub path: PathBuf,
+    /// Category inferred from the file extension.
+    pub kind: FileKind,
+}
+
+/// A group of stored files that appear to belong to the same game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryEntry {
+    /// Stable key used to address this entry from UI actions.
+    pub key: String,
+    /// Display name inferred from filenames and, when available, Steam metadata.
+    pub name: String,
+    /// Whether the name is only a filename-derived fallback that may be replaced by online metadata.
+    pub name_is_fallback: bool,
+    /// Path to a local or downloaded cover image, if one is available.
+    pub cover_path: Option<PathBuf>,
+    /// Files stored for this entry.
+    pub files: Vec<LibraryFile>,
+}
+
+impl LibraryEntry {
+    /// Number of manifest files in this entry.
+    pub fn manifest_count(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|file| file.kind == FileKind::Manifest)
+            .count()
+    }
+
+    /// Number of Lua files in this entry.
+    pub fn lua_count(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|file| file.kind == FileKind::Lua)
+            .count()
+    }
+}
+
+/// A point-in-time scan of the configured local storage folders.
+#[derive(Debug, Clone, Default)]
+pub struct LibrarySnapshot {
+    /// Grouped library entries, rebuilt from the filesystem on refresh.
+    pub entries: Vec<LibraryEntry>,
+    /// Error encountered while scanning, if any.
+    pub error: Option<String>,
+}
+
+/// Summary of a completed import operation.
+#[derive(Debug, Clone)]
+pub struct ImportOutcome {
+    /// Library state after the import attempt.
+    pub snapshot: LibrarySnapshot,
+    /// Files copied successfully.
+    pub imported: usize,
+    /// Files skipped because they were unsupported, missing, or already present.
+    pub skipped: usize,
+    /// Errors that explain any partial failure.
+    pub errors: Vec<String>,
+}

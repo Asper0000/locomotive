@@ -1,0 +1,89 @@
+2026-10-17 — Align page headers and restore App ID metadata and cover lookups
+- Matched the Library and Import header-to-separator spacing to Options, and aligned the Library Refresh button with the right inset used by the scrollable game cards.
+- Replaced the persistent Storage guide card with a compact square `?` control and a scrollable modal explaining folder destinations, file grouping, imports, refreshes, deletion, and optional online metadata.
+- Tracked whether a game name is only a filename-derived fallback. Entries with a known App ID now continue to request the real Steam Store name even when the Lua filename itself looks meaningful.
+- Updated cover lookup for Steam's hashed local library-cache directories, current shared Steam static asset hosts, PNG/JPEG candidates, and the official header-image URL returned by the Store API. The returned image is tried first to avoid unnecessary failed CDN probes; the public SteamCMD app-info API is a name fallback for IDs without a useful Store result. Horizontal header art uses a wider tile instead of being aggressively cropped, and image signatures are checked before caching.
+- Versioned failed-lookup markers so past failures from the earlier CDN logic do not block retries for six or twenty-four hours after this update. Reused valid images from the previous cache format while ignoring cached files with invalid image signatures.
+
+2026-10-17 — Fix Windows build entry point and lockfile reconciliation
+- Added BUILD_WINDOWS.bat for Command Prompt users. It launches BUILD_WINDOWS.ps1 through Windows PowerShell explicitly, avoids opening the .ps1 file in its associated editor, passes build-mode arguments through, and preserves the process exit code.
+- Improved Windows build prerequisite checks and failure messages for Rust, the x86_64 MSVC target, Visual C++ build tools, and the release output.
+- Fixed lockfile handling so Cargo can create a missing Cargo.lock or update a stale one when Cargo.toml or dependency features change. The build still reuses an existing valid lockfile but no longer fails solely because --locked prevents necessary reconciliation.
+- Updated the build instructions and troubleshooting table.
+
+2026-10-17 — Streamline the library and options screens
+- Reworked the library into compact cover-art cards, with game file lists hidden until the card's Show files control is opened. Entries use the resolved Steam game name when local metadata or the public Store API can supply it instead of displaying the raw fallback AppID label.
+- Enabled Iced image decoding, including PNG support. Cover art is read from Steam's local library cache first, then looked up through the public Steam CDN and cached in Locomotive's user-data directory; local operation still works if network lookup is unavailable.
+- Moved library scans and artwork resolution into background tasks. Opening the Library and completing imports, removals, or storage-path changes now triggers a quiet refresh. A follow-up refresh is queued if a change happens during an active refresh.
+- Cached recent failed name/cover lookups for a limited period so unavailable metadata or an offline connection does not trigger the same slow requests every time the Library is opened.
+- Made status notices expire automatically after five seconds, with per-notice tokens so an older timer cannot dismiss a newer message. Routine library refreshes no longer create success notifications.
+- Added separators under page and section headings, reserved space beside scrollable content so scrollbars do not cover cards or inputs, and reorganized the Options storage note into a small guide with explicit default destinations and a clear explanation of what saving paths changes.
+- Documented the optional curl/network fallback and added a non-blocking capability check to both build scripts.
+- Updated the product description to explain the configured default destinations accurately, and documented how optional curl support affects missing names and cover downloads.
+2026-10-15 — Group library by game, suppress subprocess console windows
+- Added src/backend/lua_meta.rs. It reads a `.lua` file and extracts the
+  app id (from the single-argument addappid call) and the depot ids (from
+  the three-argument addappid calls). No Lua is executed; the reader scans
+  for the function name and reads the numeric first argument. That is all
+  the library screen needs to group files correctly.
+- Rewrote the grouping in src/backend/library.rs. Previously the app id
+  was only recognised when Steam's local ACF metadata already listed the
+  game, so `.lua` files for uninstalled games ended up as their own
+  entries and every `.manifest` file became an entry too. The new logic
+  is two passes: (1) parse every Lua file, take its app id from contents
+  or from a numeric filename stem, and register a depot-to-app map;
+  (2) assign every manifest to the app that owns its depot, falling back
+  to Steam's installed-depot map, then to a standalone entry keyed by
+  depot id. Steam metadata now only improves display names; grouping no
+  longer depends on it.
+- Added CREATE_NO_WINDOW to every Windows subprocess spawn in
+  src/backend/steam.rs and src/backend/file_dialog.rs. The registry
+  probe spawns `reg.exe` and the file pickers spawn `powershell.exe`;
+  without the flag, Windows opens a console window for each call, which
+  produced the string of black terminals that appeared whenever the
+  library was refreshed.
+- Cached the Steam root discovery in a OnceLock in src/backend/steam.rs.
+  The probe used to run on every State construction and every library
+  refresh, which meant three `reg.exe` calls each time. It now runs once
+  per process. Combined with CREATE_NO_WINDOW, opening the application
+  produces no console flashes at all.
+2026-10-15 — Fix compile errors from the default-path patch
+- src/views/options.rs: the explanatory string contains Windows path
+  separators. Switched to a raw string literal (r"...") so Rust no longer
+  reads `\c` and `\d` as unknown escape sequences.
+- src/views/sidebar.rs: removed the unused `text` import.
+- src/app.rs: removed the `drag_and_drop` field from window::Settings.
+  That field does not exist in iced 0.14. File drops already arrive
+  through the window::events() subscription, which the app wires up
+  via State::subscription, so nothing was lost by removing it.
+2026-10-15 — Route imports to Steam active directories by default
+- Changed default_settings() in src/backend/archive.rs to prefer Steam's
+  active directories when a Steam installation is discovered:
+    .lua files      -> <Steam>\config\stplug-in
+    .manifest files -> <Steam>\depotcache
+  When no Steam installation is found, the previous private local library
+  under the user's application data folder is used instead, so the tool
+  remains usable on machines without Steam.
+- Added steam::stplug_in_dir() and steam::depotcache_dir() helpers so the
+  two paths are produced from the discovered Steam root in one place.
+- Relaxed the storage path validation. The two active directories are now
+  accepted even though they sit inside a Steam installation, because those
+  are the directories the tool exists to populate. Any other path inside
+  a Steam root (game installs under steamapps\common, config subfolders,
+  etc.) is still rejected, so a misconfigured path cannot write into a
+  game installation.
+- Existing path overrides stored in %APPDATA%\Locomotive\paths.conf still
+  take precedence over the new defaults. Users upgrading from a previous
+  build need to either delete that file once or update the paths from the
+  Options screen and press Save storage paths.
+- This change contradicts a sentence in AGENTS.md that said the tool
+  "must not write to Steam's active directories". That sentence predated
+  the decision to route imports there and should be updated to match the
+  new behavior.
+2026-10-15 — Local library import and management
+- Added native multi-file import and window drag-and-drop staging for `.manifest`, `.manifests`, and `.lua` files so users can choose batches or drop files directly.
+- Added separately configurable manifest and Lua storage folders, persisted per user, with validation that prevents storage paths inside an active Steam installation.
+- Connected the Library screen to filesystem scans at startup and on refresh, grouping related filenames and using read-only local Steam metadata where available.
+- Added conflict-safe copy handling and a confirmation step before deleting an entry's local stored copies; original source files and installed game files are not modified.
+- Removed stale hook-binary packaging and the obsolete UI-only patch script so release builds ship only the manager executable.
+- Updated project documentation to describe the local-manager scope and the native drag-and-drop limitation on Wayland.
