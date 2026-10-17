@@ -1,3 +1,56 @@
+2026-10-17 -- Respect RustyTools' configured Lua folder
+
+- Added `backend/rusty_tools_config.rs` (new): reads `[lua] dir` from
+  `<Steam>\rustytools.toml` with the same fallback RustyTools uses
+  (`<Steam>\config\stplug-in`). `archive::default_settings` now uses
+  `configured_lua_dir` for the default Lua directory, and
+  `archive::load_settings` lets an explicit `[lua] dir` override any
+  `lua=` value stored in `%APPDATA%\Locomotive\paths.conf`. RustyTools
+  is the process that actually loads the files, so it wins.
+- Previously, Locomotive scanned `stplug-in` at startup even when
+  RustyTools was configured for a different directory. Stale `.lua`
+  files from an earlier setup appeared as active library entries that
+  Steam would never load, and the reported library did not match what
+  RustyTools was actually using.
+- Extended `library::scan` with an orphan pass. When the configured
+  Lua directory is not `stplug-in`, the scanner checks `stplug-in` for
+  `.lua` files whose app is installed in Steam (`appmanifest_<id>.acf`
+  present). Those files become `LibraryEntry::source_warning: Some(...)`
+  with `current_paths` set to the misplaced files and `configured_dir`
+  set to the configured directory. The orphaned `.lua` files do not
+  enter `entry.files`, so the normal file counts remain accurate.
+- Added `Message::FixOrphanEntry(key)`. `importer::fix_orphan_entry`
+  copies every orphaned `.lua` into the configured directory (deleting
+  the source) and refuses to overwrite a different file with the same
+  name. A follow-up refresh clears the warning once the entry is
+  healthy. This is the "fix" action offered on the warning card.
+- Extended `importer::remove_entry` to also delete the orphaned `.lua`
+  files tracked in `source_warning.current_paths`. Without this the
+  user could not clean up a warning entry that has no healthy
+  manifest; the scanner found those files, so they are safe to remove.
+- Library view shows a red warning card on any entry with
+  `source_warning`, plus a `LUA - STALE` row for each orphaned file
+  when the card is expanded. Remove confirmation now counts both
+  configured files and orphaned `.lua` files.
+- `Message::SaveLuaDir` now triggers a library refresh after saving,
+  so a change to the configured Lua directory is reflected without
+  waiting for the user to press Refresh manually.
+- Updated `docs/AGENTS.md` section 1: documented the Lua source rule,
+  the orphan exception, and the fact that `paths.conf`'s `lua=` entry
+  is a fallback rather than the source of truth. Also dropped the
+  "must not write to Steam's active directories" line that predated
+  the default-to-`depotcache`/`stplug-in` decision and never matched
+  actual behaviour.
+- RustyTools itself needed no change: `utils/config/config.rs::get_lua_dir`
+  already reads `[lua] dir`, `merge_watch_dirs` uses it, and
+  `config_file_watcher` restarts the lua watcher when it changes.
+  RustyTools was correct; Locomotive was the one displaying stale data.
+- Patch delivery fix: the previous patch.bat round-tripped the batch
+  file through cp1252, which turned the em-dash inside the changelog
+  title into a curly quote that closed a PowerShell string literal.
+  The payload now uses ASCII-only punctuation and the extractor reads
+  and writes UTF-8 with a BOM so Windows PowerShell parses scripts
+  consistently.
 0.0.1 Alpha — Library presentation and help guide
 - Centered the help glyph with explicit text alignment and gave the confirmation button a fixed, centered layout.
 - Reworked the Storage guide into shorter plain-language sections, clear folder cards, and separated action explanations inside a full-window dialog.

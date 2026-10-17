@@ -132,11 +132,6 @@ pub fn download_and_install(steam_root: PathBuf) -> impl iced::futures::Stream<I
                 let _ = tx.try_send(crate::message::Message::SetupProgress(1.0));
                 let _ = tx.try_send(crate::message::Message::SetupFinished(Ok(())));
             }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = tx.try_send(crate::message::Message::SetupFinished(Err("Setup is only supported on Windows.".into())));
-            }
         });
 
         while let Some(msg) = rx.next().await {

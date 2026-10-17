@@ -67,19 +67,31 @@ pub fn view(state: &State) -> Element<'_, Message> {
 fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'static, Message> {
     let manifest_count = entry.manifest_count();
     let lua_count = entry.lua_count();
+    let orphan_count = entry.orphan_lua_count();
     let key = entry.key.clone();
+
+    let summary = if orphan_count == 0 {
+        format!("{manifest_count} manifests  -  {lua_count} Lua files")
+    } else {
+        format!(
+            "{manifest_count} manifests  -  {lua_count} Lua files  -  {orphan_count} stale outside library"
+        )
+    };
+    let summary_color = if orphan_count == 0 {
+        theme::TEXT_SECONDARY
+    } else {
+        theme::DANGER
+    };
 
     let title_block = column![
         text(entry.name.clone()).size(14).color(theme::TEXT_PRIMARY),
         components::separator(),
-        text(format!("{manifest_count} manifests  ·  {lua_count} Lua files"))
-            .size(11)
-            .color(theme::TEXT_SECONDARY),
+        text(summary).size(11).color(summary_color),
     ]
     .spacing(5)
     .width(Length::Fill);
 
-    let toggle_label = if expanded { "Hide files  ▴" } else { "Show files  ▾" };
+    let toggle_label = if expanded { "Hide files  ^" } else { "Show files  v" };
     let header = row![
         cover_art(entry.cover_path.clone(), &entry.name),
         title_block,
@@ -99,12 +111,13 @@ fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'st
 
     let mut content = column![header].spacing(10);
     if confirm {
+        let total_to_delete = entry.files.len() + orphan_count;
         content = content
             .push(components::separator())
             .push(
                 text(format!(
-                    "Delete the {} locally stored file(s)? This only removes the copies in the configured library folders.",
-                    entry.files.len()
+                    "Delete the {total_to_delete} locally stored file(s)? This only removes the copies in the configured library folders{}.",
+                    if orphan_count > 0 { " and the orphaned Lua files" } else { "" }
                 ))
                 .size(11)
                 .color(theme::TEXT_SECONDARY),
@@ -112,10 +125,18 @@ fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'st
             .push(components::action_button("Cancel", Message::CancelRemove));
     }
 
+    if let Some(warning) = &entry.source_warning {
+        content = content
+            .push(components::separator())
+            .push(warning_card(warning, &key));
+    }
+
     if expanded {
         content = content.push(components::separator());
-        if entry.files.is_empty() {
-            content = content.push(text("No files found for this game.").size(11).color(theme::TEXT_MUTED));
+        if entry.files.is_empty() && entry.source_warning.is_none() {
+            content = content.push(
+                text("No files found for this game.").size(11).color(theme::TEXT_MUTED),
+            );
         } else {
             let mut files = column![].spacing(6);
             for file in &entry.files {
@@ -139,6 +160,23 @@ fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'st
                     .align_y(Alignment::Center),
                 );
             }
+            for path in entry.source_warning.as_ref().map(|w| w.current_paths.as_slice()).unwrap_or(&[]) {
+                let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("<unnamed>");
+                files = files.push(
+                    row![
+                        container(text("LUA - STALE").size(9).color(theme::TEXT_PRIMARY))
+                            .padding(Padding { top: 4.0, right: 6.0, bottom: 4.0, left: 6.0 })
+                            .style(|_theme| container::Style {
+                                background: Some(theme::DANGER.into()),
+                                border: Border { color: theme::DANGER, width: 1.0, radius: 4.0.into() },
+                                ..Default::default()
+                            }),
+                        text(file_name.to_owned()).size(11).color(theme::TEXT_SECONDARY),
+                    ]
+                    .spacing(9)
+                    .align_y(Alignment::Center),
+                );
+            }
             content = content.push(files);
         }
     }
@@ -149,13 +187,63 @@ fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'st
         .style(move |_theme| container::Style {
             background: Some(if confirm { theme::BG_ELEVATED } else { theme::BG_SURFACE }.into()),
             border: Border {
-                color: if confirm { theme::TEXT_SECONDARY } else { theme::BORDER },
+                color: if confirm {
+                    theme::TEXT_SECONDARY
+                } else if entry.orphan_lua_count() > 0 {
+                    theme::DANGER
+                } else {
+                    theme::BORDER
+                },
                 width: 1.0,
                 radius: theme::CORNER_RADIUS.into(),
             },
             ..Default::default()
         })
         .into()
+}
+
+fn warning_card(warning: &crate::state::library_state::SourceWarning, key: &str) -> Element<'static, Message> {
+    let count = warning.current_paths.len();
+    let from = warning
+        .current_paths
+        .first()
+        .and_then(|p| p.parent())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<unknown>".into());
+    let to = warning.configured_dir.display().to_string();
+    container(
+        column![
+            text(format!("[!] {count} Lua file(s) in the wrong folder"))
+                .size(12)
+                .color(theme::DANGER),
+            text(format!("Currently in '{from}'."))
+                .size(11)
+                .color(theme::TEXT_SECONDARY),
+            text(format!("RustyTools reads from '{to}'. These files are not active."))
+                .size(11)
+                .color(theme::TEXT_SECONDARY),
+            text("The installed game files are unchanged; only the Lua copies are affected.")
+                .size(11)
+                .color(theme::TEXT_MUTED),
+            components::primary_button(
+                "Move to configured folder",
+                Message::FixOrphanEntry(key.to_string()),
+            ),
+        ]
+        .spacing(6),
+    )
+    .padding(10)
+    .width(Length::Fill)
+    .style(|_theme| container::Style {
+        background: Some(theme::BG_ELEVATED.into()),
+        border: Border {
+            color: theme::DANGER,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn cover_art(path: Option<std::path::PathBuf>, name: &str) -> Element<'static, Message> {
@@ -196,63 +284,52 @@ fn cover_art(path: Option<std::path::PathBuf>, name: &str) -> Element<'static, M
 fn cached_cover_handle(path: std::path::PathBuf, width: u32, height: u32) -> image::Handle {
     let cache = COVER_HANDLES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut handles = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    
+
     let key = (path.clone(), width, height);
     if let Some(handle) = handles.get(&key) {
         return handle.clone();
     }
-    
+
     let handle = match ::image::open(&path) {
         Ok(img) => {
-            // 1. Smoothly scale the image down to the exact slot size
             let img = img.resize_exact(width, height, ::image::imageops::FilterType::Lanczos3);
             let mut rgba = img.to_rgba8();
-            
-            // 2. Manually apply the rounded corner mask with Anti-Aliasing
+
             let fw = width as f32;
             let fh = height as f32;
             let radius = 6.0_f32.min(fw / 2.0).min(fh / 2.0);
-            
+
             for y in 0..height {
                 for x in 0..width {
-                    let fx = x as f32 + 0.5; // Pixel center X
-                    let fy = y as f32 + 0.5; // Pixel center Y
-                    
+                    let fx = x as f32 + 0.5;
+                    let fy = y as f32 + 0.5;
+
                     let mut alpha_multiplier = 1.0_f32;
-                    
-                    // Top-Left corner
+
                     if fx < radius && fy < radius {
                         let dist = ((fx - radius).powi(2) + (fy - radius).powi(2)).sqrt();
                         alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
-                    } 
-                    // Top-Right corner
-                    else if fx > fw - radius && fy < radius {
+                    } else if fx > fw - radius && fy < radius {
                         let dist = ((fx - (fw - radius)).powi(2) + (fy - radius).powi(2)).sqrt();
                         alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
-                    } 
-                    // Bottom-Left corner
-                    else if fx < radius && fy > fh - radius {
+                    } else if fx < radius && fy > fh - radius {
                         let dist = ((fx - radius).powi(2) + (fy - (fh - radius)).powi(2)).sqrt();
                         alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
-                    } 
-                    // Bottom-Right corner
-                    else if fx > fw - radius && fy > fh - radius {
+                    } else if fx > fw - radius && fy > fh - radius {
                         let dist = ((fx - (fw - radius)).powi(2) + (fy - (fh - radius)).powi(2)).sqrt();
                         alpha_multiplier = (radius - dist + 0.5).clamp(0.0, 1.0);
                     }
-                    
+
                     if alpha_multiplier < 1.0 {
                         let pixel = rgba.get_pixel_mut(x, y);
-                        // Blend the calculated smooth edge with the existing alpha channel
                         pixel.0[3] = (pixel.0[3] as f32 * alpha_multiplier) as u8;
                     }
                 }
             }
-            
+
             image::Handle::from_rgba(width, height, rgba.into_raw())
         }
         Err(_) => {
-            // Fallback if image fails to load
             let mut rgba = vec![0u8; (width * height * 4) as usize];
             for i in 0..(width * height) {
                 rgba[i as usize * 4] = 30;
@@ -263,12 +340,10 @@ fn cached_cover_handle(path: std::path::PathBuf, width: u32, height: u32) -> ima
             image::Handle::from_rgba(width, height, rgba)
         }
     };
-    
+
     handles.insert(key, handle.clone());
     handle
 }
-
-
 
 fn is_landscape_art(path: &std::path::Path) -> bool {
     path.file_name()

@@ -29,26 +29,18 @@ pub fn run() -> iced::Result {
             resizable: true,
             minimizable: true,
             closeable: true,
-
             size: Size::new(760.0, 520.0),
             min_size: Some(Size::new(640.0, 440.0)),
-
-            #[cfg(target_os = "windows")]
             platform_specific: windows_platform(),
-
             ..window::Settings::default()
         })
         .run()
 }
 
-/// Theme selector. Kept as a named function rather than a closure so its
-/// lifetime is generic over the state reference.
 fn theme_for(_state: &State) -> iced::Theme {
     theme::app_theme()
 }
 
-/// Windows-specific window configuration.
-#[cfg(target_os = "windows")]
 fn windows_platform() -> window::settings::PlatformSpecific {
     window::settings::PlatformSpecific {
         corner_preference: CornerPreference::Round,

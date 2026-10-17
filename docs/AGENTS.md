@@ -1,25 +1,53 @@
-# AGENTS.md — MANDATORY INSTRUCTIONS FOR ALL AI ASSISTANTS
-
-> **READ THIS FILE FIRST, EVERY SESSION, BEFORE TOUCHING ANY CODE.**
-> This file is the single source of truth for how this project is organized,
-> how it is built, and how code must be written. If you are an AI assistant
-> working on this repository, these instructions are **mandatory**, not
-> suggestions. Violating them produces inconsistent, unmergeable code.
-
 ## 1. Project Identity
 
 - **Name:** Locomotive
-- **Purpose:** Cross-platform GUI file manager for `.manifest`, `.manifests`,
-  and `.lua` files. It copies files into separate, configurable local-library
-  folders, groups them for browsing, and deletes only its own stored copies.
-  It must not write to Steam's active directories or alter game installations.
+- **Purpose:** Windows desktop GUI file manager for `.manifest`, `.manifests`,
+  and `.lua` files. It copies files into configurable local-library folders,
+  groups them for browsing, and deletes only its own stored copies.
+  Default destinations match the folders RustyTools reads from:
+  `<Steam>\depotcache` for manifests, and RustyTools' configured
+  `[lua] dir` (falling back to `<Steam>\config\stplug-in`) for Lua files.
+  It must not delete installed game files or alter account entitlements.
 - **Language:** Rust, edition 2024 (requires Rust >= 1.85).
 - **UI Framework:** `iced`, pinned to an exact version in `Cargo.toml`.
 - **Renderer:** `iced_wgpu` (Vulkan / DX12 / Metal) with the `tiny-skia`
   software fallback that Iced provides by default.
-- **Targets:** Windows 10/11 (x86_64) and Linux (x86_64, AppImage output).
-  macOS is not a target and must not be assumed or advertised.
+- **Targets:** Windows 10/11 (x86_64). macOS and Linux are not targets and
+  must not be assumed or advertised.
 
+### The Lua source rule
+
+RustyTools is the process that actually loads `.lua` files into Steam.
+Locomotive's job is to display exactly what RustyTools will load, plus
+any installed game whose files have drifted out of that set. This is
+why `paths.conf` is not authoritative for the Lua directory.
+
+- **Primary Lua directory** = `<Steam>\rustytools.toml`'s `[lua] dir`,
+  resolved by `backend/rusty_tools_config.rs`. If the key is absent,
+  the primary is `<Steam>\config\stplug-in`. `backend/archive.rs` uses
+  `rusty_tools_config::configured_lua_dir` for its default and
+  `explicit_lua_dir` to override any `lua=` value in `paths.conf`.
+- **No other directory may be treated as primary.** Files left over in
+  the previous default (usually `stplug-in` after the user reconfigured
+  RustyTools) do not belong to the library. `library::scan` only
+  enumerates the configured directory for its normal pass.
+- **Orphan exception.** If an app is installed in Steam (an
+  `appmanifest_<appid>.acf` exists) and its `.lua` currently lives in
+  `stplug-in` rather than the primary directory, `library::scan` creates
+  an entry with `LibraryEntry::source_warning: Some(...)`. The entry's
+  `.lua` is not in `files`; it is in `source_warning.current_paths`. The
+  UI shows a warning card with a "Move to configured folder" button.
+  `importer::fix_orphan_entry` copies the file into the configured
+  directory and deletes the original; a follow-up refresh clears the
+  warning. `importer::remove_entry` also deletes these orphaned `.lua`
+  files when the user picks Remove instead of Fix.
+- **Locomotive never executes Lua.** `backend/lua_meta.rs` reads
+  `addappid(...)` lines for grouping only. `setappticket`,
+  `seteticket`, `http_get` and similar functions are RustyTools'
+  business and are never modelled here.
+- **`paths.conf` still exists**, but only its `manifest=` entry is
+  authoritative. `lua=` is a fallback used when RustyTools' config has
+  no explicit `[lua] dir`.
 ## 2. Non-Negotiable Code Rules
 
 1. **Modularity first.** No file may exceed ~300 lines of non-comment code.
@@ -147,13 +175,12 @@ These are version-specific and will silently break copy-pasted code:
 
 ## 6. Build System Contract
 
-- `BUILD_WINDOWS.ps1` and `BUILD_LINUX.sh` are **the** build entry points.
+- `scripts/BUILD_WINDOWS.ps1` is **the** build entry point.
   Documentation must not tell users to run `cargo build` directly.
 - Both scripts must be idempotent. Running either twice must not fail.
 - Both scripts must probe for their required tooling and, when something is
   missing, print the exact install command for that platform and exit
   non-zero. They must never fail silently.
-- Linux output: `dist/locomotive-x86_64.AppImage`.
 - Windows output: `dist/locomotive.exe`.
 - Adding a tool dependency means adding a probe for it **and** documenting
   it in `BUILD_INSTRUCTIONS.md`.

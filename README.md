@@ -1,6 +1,6 @@
 # Locomotive
 
-Locomotive is a cross-platform desktop manager for local collections of Steam
+Locomotive is a Windows desktop manager for local collections of Steam
 depot manifest files (`.manifest` / `.manifests`) and Lua files (`.lua`). It
 provides import staging, drag-and-drop, independently configurable local
 storage folders, automatic library scanning, grouping by inferred game name,
@@ -31,11 +31,11 @@ configured folders; it does not remove installed game binaries.
 
 - Rust, edition 2024
 - [Iced](https://github.com/iced-rs/iced) 0.14
-- Windows 10/11 and Linux
+- Windows 10/11
 
 ## Building
 
-See `BUILD_INSTRUCTIONS.md` for prerequisites and packaging modes.
+See `docs/BUILD_INSTRUCTIONS.md` for prerequisites and packaging modes.
 
 **Windows (Command Prompt or PowerShell)**
 
@@ -43,22 +43,16 @@ From Command Prompt (`cmd.exe`), run the wrapper so PowerShell is launched
 explicitly:
 
 ```bat
-BUILD_WINDOWS.bat
+scripts\BUILD_WINDOWS.bat
 ```
 
 From PowerShell, run the script directly:
 
 ```powershell
-.\BUILD_WINDOWS.ps1
+.\scripts\BUILD_WINDOWS.ps1
 ```
 
-**Linux**
-
-```bash
-./BUILD_LINUX.sh
-```
-
-The scripts check their prerequisites and place release output in `dist/`. `BUILD_WINDOWS.bat` is the Command Prompt entry point; it invokes the PowerShell script with a process-scoped execution-policy override and propagates the build exit code.
+The scripts check their prerequisites and place release output in `dist/`. `scripts\BUILD_WINDOWS.bat` is the Command Prompt entry point; it invokes the PowerShell script with a process-scoped execution-policy override and propagates the build exit code.
 
 ## Storage and privacy
 

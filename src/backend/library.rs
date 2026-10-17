@@ -1,22 +1,31 @@
 //! Reconstructs the local archive into grouped entries on each scan.
 //!
-//! Grouping works in two passes:
+//! Grouping works in three passes:
 //!
-//!   1. Every `.lua` file is read and parsed for its app id and depot list.
-//!      A `.lua` file named `2651280.lua` is an entry for app 2651280, and
-//!      the depots it declares form a depot-to-app map.
-//!   2. Every `.manifest` file is matched to an app through that map. A
-//!      manifest that no Lua references still becomes an entry of its own,
-//!      keyed by depot id.
+//!   1. Every `.lua` file in the configured `lua_dir` is read and
+//!      parsed for its app id and depot list. A `.lua` file named
+//!      `2651280.lua` is an entry for app 2651280, and the depots it
+//!      declares form a depot-to-app map.
+//!   2. Every `.manifest` file in the configured `manifest_dir` is
+//!      matched to an app through that map. A manifest that no Lua
+//!      references still becomes an entry of its own, keyed by depot id.
+//!   3. When the configured `lua_dir` is not `stplug-in`, stale `.lua`
+//!      files left over in `stplug-in` are checked against Steam's
+//!      installed apps. An app that is installed but whose Lua lives
+//!      outside the configured directory becomes an entry with a
+//!      `source_warning`; the user can move the file or delete it.
 //!
-//! Steam metadata, when present, only improves display names. Grouping does
-//! not depend on it, so uninstalled games still group correctly.
+//! Steam metadata, when present, only improves display names. Grouping
+//! does not depend on it, so uninstalled games still group correctly.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::state::{FileKind, library_state::{LibraryEntry, LibraryFile, LibrarySnapshot}};
+use crate::state::{
+    FileKind,
+    library_state::{LibraryEntry, LibraryFile, LibrarySnapshot, SourceWarning},
+};
 
 use super::artwork;
 use super::lua_meta;
@@ -28,12 +37,20 @@ struct EntryBuilder {
     name: String,
     name_is_fallback: bool,
     files: Vec<LibraryFile>,
+    /// True once at least one `.lua` file from the configured
+    /// directory has been added. Used to skip orphaned `.lua` files
+    /// that duplicate a healthy entry.
+    has_configured_lua: bool,
+    /// `.lua` files found outside the configured directory. Populated
+    /// only by the orphan scan; empty for healthy entries.
+    warning_paths: Vec<PathBuf>,
 }
 
 /// Scans configured folders and uses read-only Steam metadata when available to improve names.
 pub(crate) fn scan(manifest_dir: &Path, lua_dir: &Path) -> LibrarySnapshot {
-    let metadata = steam::discover_root().and_then(|root| steam::read_metadata(&root).ok());
-    scan_with_metadata(manifest_dir, lua_dir, metadata.as_ref())
+    let root = steam::discover_root();
+    let metadata = root.as_ref().and_then(|r| steam::read_metadata(r).ok());
+    scan_with_metadata(manifest_dir, lua_dir, metadata.as_ref(), root.as_deref())
 }
 
 /// Rebuilds library entries and enriches unknown app IDs with cached Steam names and covers.
@@ -47,6 +64,7 @@ fn scan_with_metadata(
     manifest_dir: &Path,
     lua_dir: &Path,
     metadata: Option<&SteamMetadata>,
+    steam_root: Option<&Path>,
 ) -> LibrarySnapshot {
     let empty_apps = HashMap::new();
     let empty_depot_owners = HashMap::new();
@@ -58,10 +76,8 @@ fn scan_with_metadata(
     let mut groups: HashMap<String, EntryBuilder> = HashMap::new();
     let mut depot_to_app: HashMap<String, String> = HashMap::new();
 
-    // Pass 1: read every Lua file, determine its app id, and register
-    // the depots it declares. The app id comes from the Lua contents
-    // first, from the filename stem second, and from Steam metadata only
-    // as a display-name source.
+    // Pass 1: read every Lua file in the configured directory and
+    // register its declared depots.
     for (path, _) in collect_files(lua_dir, FileKind::Lua) {
         let meta = lua_meta::read(&path).unwrap_or_default();
         let stem = file_stem(&path);
@@ -81,8 +97,11 @@ fn scan_with_metadata(
             name,
             name_is_fallback,
             files: Vec::new(),
+            has_configured_lua: false,
+            warning_paths: Vec::new(),
         });
         entry.files.push(LibraryFile { path, kind: FileKind::Lua });
+        entry.has_configured_lua = true;
 
         if let Some(id) = &app_id {
             for depot in &meta.depots {
@@ -91,9 +110,8 @@ fn scan_with_metadata(
         }
     }
 
-    // Pass 2: read every manifest, resolve its depot to an app, and add it
-    // to the matching group. Falls back to Steam's depot ownership map, then
-    // to a standalone entry keyed by depot id.
+    // Pass 2: read every manifest, resolve its depot to an app, and add
+    // it to the matching group.
     for (path, kind) in collect_files(manifest_dir, FileKind::Manifest) {
         let stem = file_stem(&path);
         let depot_id = manifest_depot_id(&stem);
@@ -125,8 +143,23 @@ fn scan_with_metadata(
             name: fallback_name,
             name_is_fallback: metadata_name.is_none() && !has_existing_group,
             files: Vec::new(),
+            has_configured_lua: false,
+            warning_paths: Vec::new(),
         });
         entry.files.push(LibraryFile { path, kind });
+    }
+
+    // Pass 3: look for orphaned `.lua` files in the historical default
+    // (`<Steam>\config\stplug-in`) when the configured directory is not
+    // that default. These appear when the user changed `[lua] dir` in
+    // RustyTools and left the previous files behind. If the app is
+    // still installed in Steam, it deserves an entry with a warning so
+    // the user can move the file into the configured folder.
+    if let Some(root) = steam_root {
+        let stplug_in = root.join("config").join("stplug-in");
+        if !same_path(&stplug_in, lua_dir) {
+            scan_orphans(&mut groups, &stplug_in, apps);
+        }
     }
 
     let mut entries: Vec<LibraryEntry> = groups
@@ -137,12 +170,21 @@ fn scan_with_metadata(
                 let right_name = right.path.file_name().and_then(|name| name.to_str()).unwrap_or("");
                 left_name.to_lowercase().cmp(&right_name.to_lowercase())
             });
+            let source_warning = if entry.warning_paths.is_empty() {
+                None
+            } else {
+                Some(SourceWarning {
+                    current_paths: entry.warning_paths,
+                    configured_dir: lua_dir.to_path_buf(),
+                })
+            };
             LibraryEntry {
                 key: entry.key,
                 name: entry.name,
                 name_is_fallback: entry.name_is_fallback,
                 cover_path: None,
                 files: entry.files,
+                source_warning,
             }
         })
         .collect();
@@ -154,6 +196,50 @@ fn scan_with_metadata(
     });
 
     LibrarySnapshot { entries, error: None }
+}
+
+fn scan_orphans(
+    groups: &mut HashMap<String, EntryBuilder>,
+    orphan_dir: &Path,
+    installed_apps: &HashMap<String, AppInfo>,
+) {
+    for (path, _) in collect_files(orphan_dir, FileKind::Lua) {
+        let stem = file_stem(&path);
+        let Some(app_id) = numeric_stem(&stem) else { continue };
+        // Not installed -> the lua is dead weight; do not surface it.
+        if !installed_apps.contains_key(&app_id) { continue; }
+        let key = format!("app:{app_id}");
+        // A healthy lua already exists in the configured directory, so
+        // this orphan is redundant. Ignore it: the user can clean it up
+        // with a manual delete; we do not want to nag about it here.
+        if groups.get(&key).map_or(false, |group| group.has_configured_lua) {
+            continue;
+        }
+        let name = installed_apps
+            .get(&app_id)
+            .map(|app| app.name.clone())
+            .unwrap_or_else(|| format!("App {app_id}"));
+        let entry = groups.entry(key.clone()).or_insert_with(|| EntryBuilder {
+            key,
+            name,
+            name_is_fallback: false,
+            files: Vec::new(),
+            has_configured_lua: false,
+            warning_paths: Vec::new(),
+        });
+        entry.warning_paths.push(path);
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    let canon = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let a = canon(a);
+    let b = canon(b);
+    if cfg!(windows) {
+        a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+    } else {
+        a == b
+    }
 }
 
 fn collect_files(directory: &Path, expected: FileKind) -> Vec<(PathBuf, FileKind)> {

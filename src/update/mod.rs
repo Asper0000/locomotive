@@ -196,6 +196,25 @@ pub fn handle(state: &mut State, message: Message) -> Task<Message> {
             state.confirm_remove = None;
             Task::none()
         }
+        Message::FixOrphanEntry(key) => {
+            let Some(entry) = state.library.entries.iter().find(|entry| entry.key == key).cloned() else {
+                return show_notice(state, "That library entry is no longer available. Refresh and try again.");
+            };
+            match importer::fix_orphan_entry(&entry) {
+                Ok(0) => show_notice(state, "Nothing to move; the folder is already up to date."),
+                Ok(moved) => {
+                    let notice = show_notice(
+                        state,
+                        format!(
+                            "Moved {moved} Lua file(s) into the configured folder. RustyTools will load them on its next refresh."
+                        ),
+                    );
+                    let refresh = start_library_refresh(state);
+                    Task::batch([notice, refresh])
+                }
+                Err(error) => show_notice(state, error),
+            }
+        }
         Message::ManifestDirChanged(path) => {
             state.manifest_dir = path;
             Task::none()
@@ -433,7 +452,9 @@ register_scheme = false
             }
             
             state.lua_dir = draft.to_string();
-            show_notice(state, "Lua directory updated.")
+            let notice = show_notice(state, "Lua directory updated.");
+            let refresh = start_library_refresh(state);
+            Task::batch([notice, refresh])
         }
     }
 }

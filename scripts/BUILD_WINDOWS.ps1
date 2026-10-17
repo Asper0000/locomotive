@@ -12,7 +12,7 @@ function Write-Ok([string]$Message)   { Write-Host "    $Message" -ForegroundCol
 function Write-Warn([string]$Message) { Write-Host "    $Message" -ForegroundColor Yellow }
 function Write-Fail([string]$Message) { Write-Host "ERROR: $Message" -ForegroundColor Red }
 
-$Root = $PSScriptRoot
+$Root = (Resolve-Path "$PSScriptRoot\..").Path
 $Dist = Join-Path $Root 'dist'
 $BinName = 'locomotive.exe'
 $Target = 'x86_64-pc-windows-msvc'
@@ -151,7 +151,7 @@ try {
         Copy-Item -LiteralPath $source -Destination (Join-Path $bundle $BinName) -Force
 
         foreach ($document in @('README.md', 'CHANGELOG.txt', 'LICENSE')) {
-            $documentPath = Join-Path $Root $document
+            $documentPath = Join-Path $Root "docs\$document"
             if (Test-Path -LiteralPath $documentPath) {
                 Copy-Item -LiteralPath $documentPath -Destination $bundle -Force
             }

@@ -9,5 +9,6 @@ pub(crate) mod importer;
 pub(crate) mod keyvalues;
 pub(crate) mod library;
 pub(crate) mod lua_meta;
+pub(crate) mod rusty_tools_config;
 pub(crate) mod steam;
 pub(crate) mod setup;

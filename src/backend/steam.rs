@@ -65,16 +65,6 @@ fn discover_root_uncached() -> Option<PathBuf> {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        candidates.extend([
-            home.join(".steam/steam"),
-            home.join(".steam/root"),
-            home.join(".local/share/Steam"),
-            home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
-        ]);
-    }
 
     candidates.into_iter().find(|path| is_steam_root(path))
 }

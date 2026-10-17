@@ -1,6 +1,6 @@
 // Entry point. Module wiring only; all logic lives in the modules below.
 
-#![cfg_attr(windows, windows_subsystem = "windows")]
+#![windows_subsystem = "windows"]
 
 mod app;
 mod backend;

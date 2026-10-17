@@ -63,6 +63,8 @@ pub enum Message {
     ConfirmRemove,
     /// Dismiss the remove confirmation.
     CancelRemove,
+    /// Move an orphaned entry's `.lua` files into the configured directory.
+    FixOrphanEntry(String),
 
     /// Update the manifest storage path field.
     ManifestDirChanged(String),

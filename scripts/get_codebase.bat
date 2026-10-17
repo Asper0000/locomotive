@@ -7,7 +7,7 @@ REM  Defaults: root = current dir, output = codebase_dump.txt
 REM ============================================================
 
 set "ROOT=%~1"
-if "%ROOT%"=="" set "ROOT=%CD%"
+if "%ROOT%"=="" set "ROOT=%~dp0.."
 set "OUT=%~2"
 if "%OUT%"=="" set "OUT=%CD%\codebase_dump.txt"
 

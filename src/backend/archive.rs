@@ -1,19 +1,24 @@
 //! Default local storage and validation for the two import destinations.
 //!
-//! By default, imports go directly into Steam's active directories:
-//!   .lua files      -> <Steam>\config\stplug-in
+//! Defaults are derived from what Steam and RustyTools actually read:
 //!   .manifest files -> <Steam>\depotcache
+//!   .lua files      -> RustyTools' `[lua] dir`, or <Steam>\config\stplug-in
 //!
-//! Those two directories are the ones Steam's own client, and BetterSteamTools,
-//! read at start-up. Writing to them is the whole point of the tool.
+//! If no Steam installation is discovered, the tool falls back to a
+//! private local library so the UI still works on machines without
+//! Steam.
 //!
-//! If no Steam installation is discovered, the tool falls back to a private
-//! local library under the user's application data folder so the UI still
-//! works on machines without Steam.
+//! `paths.conf` still exists, but its `lua=` value is subordinate to
+//! `<Steam>\rustytools.toml`'s `[lua] dir`. RustyTools is what actually
+//! loads lua into Steam, so it is the source of truth for that path;
+//! a user who set `paths.conf` to something else and then changed
+//! RustyTools' config would otherwise see Locomotive scanning a
+//! directory Steam has stopped reading from.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use super::rusty_tools_config;
 use super::steam;
 
 /// The two independent import destinations.
@@ -25,14 +30,16 @@ pub(crate) struct StorageSettings {
     pub lua_dir: PathBuf,
 }
 
-/// Returns the default destinations. Prefers Steam's active directories
-/// when a Steam installation is present; otherwise uses a private local
-/// library so the application remains usable.
+/// Returns the default destinations.
+///
+/// When a Steam installation is present, the defaults match the folders
+/// RustyTools reads from. Otherwise a private library under the user's
+/// application data folder is used.
 pub(crate) fn default_settings() -> StorageSettings {
     if let Some(root) = steam::discover_root() {
         return StorageSettings {
-            manifest_dir: steam::depotcache_dir(&root),
-            lua_dir: steam::stplug_in_dir(&root),
+            manifest_dir: rusty_tools_config::depotcache_dir(&root),
+            lua_dir: rusty_tools_config::configured_lua_dir(&root),
         };
     }
 
@@ -43,7 +50,14 @@ pub(crate) fn default_settings() -> StorageSettings {
     }
 }
 
-/// Loads saved locations, falling back to the current defaults on invalid data.
+/// Loads saved locations, falling back to the current defaults on invalid
+/// data.
+///
+/// A `[lua] dir` in `<Steam>\rustytools.toml` overrides the `lua=` entry
+/// in `paths.conf`: RustyTools is the process that actually loads lua
+/// files, so it wins. `paths.conf` is still consulted for `manifest=`
+/// (RustyTools has no equivalent setting; Steam always reads from
+/// `<Steam>\depotcache`).
 pub(crate) fn load_settings() -> StorageSettings {
     let defaults = default_settings();
     let Ok(contents) = fs::read_to_string(settings_file()) else {
@@ -60,13 +74,13 @@ pub(crate) fn load_settings() -> StorageSettings {
         }
     }
 
-    let Some(manifest_dir) = manifest_dir else {
-        return defaults;
-    };
-    let Some(lua_dir) = lua_dir else {
-        return defaults;
-    };
-    match normalize_and_validate(manifest_dir, lua_dir) {
+    let lua = steam::discover_root()
+        .and_then(|root| rusty_tools_config::explicit_lua_dir(&root))
+        .or(lua_dir)
+        .unwrap_or_else(|| defaults.lua_dir.clone());
+    let manifest = manifest_dir.unwrap_or_else(|| defaults.manifest_dir.clone());
+
+    match normalize_and_validate(manifest, lua) {
         Ok(settings) => settings,
         Err(_) => defaults,
     }
@@ -117,7 +131,7 @@ pub(crate) fn normalize_and_validate(
     for path in [&manifest_dir, &lua_dir] {
         if is_rejected_steam_path(path) {
             return Err(format!(
-                "'{}' is inside a Steam installation but is not one of the two folders the tool writes to. Use <Steam>\\depotcache for manifests and <Steam>\\config\\stplug-in for Lua files, or pick a folder outside Steam.",
+                "'{}' is inside a Steam installation but is not one of the two folders the tool writes to. Use <Steam>\\depotcache for manifests and <Steam>\\config\\stplug-in (or the configured `[lua] dir`) for Lua files, or pick a folder outside Steam.",
                 path.display()
             ));
         }
@@ -146,9 +160,6 @@ fn absolute_normalized(path: &Path) -> Result<PathBuf, String> {
     Ok(normalized)
 }
 
-/// Resolves existing symlinked ancestors before validating a destination. The final
-/// directory does not need to exist yet; any missing suffix is appended after the
-/// nearest existing ancestor has been canonicalized.
 fn resolve_existing_prefix(path: &Path) -> Result<PathBuf, String> {
     let normalized = absolute_normalized(path)?;
     let mut existing = normalized.as_path();
@@ -183,7 +194,6 @@ fn same_or_nested(path: &Path, parent: &Path) -> bool {
     }
 }
 
-/// True if `path` is exactly the stplug-in directory or a subdirectory of it.
 fn is_stplug_in(path: &Path) -> bool {
     let components: Vec<String> = path
         .components()
@@ -194,21 +204,16 @@ fn is_stplug_in(path: &Path) -> bool {
     })
 }
 
-/// True if `path` is exactly a directory named `depotcache` or a subdirectory of one.
 fn is_depotcache(path: &Path) -> bool {
     path.components().any(|component| {
         component.as_os_str().to_string_lossy().eq_ignore_ascii_case("depotcache")
     })
 }
 
-/// True when the path is inside a Steam installation but is not one of the
-/// two active directories the tool is designed to write to.
 fn is_rejected_steam_path(path: &Path) -> bool {
     if is_stplug_in(path) || is_depotcache(path) {
         return false;
     }
-    // Block writing directly inside steamapps (protects game files)
-    // but allow custom folders elsewhere in the Steam directory (e.g. config/lua).
     path.ancestors().any(|ancestor| {
         ancestor.join("steamapps").is_dir() && ancestor.file_name().and_then(|n| n.to_str()) == Some("steamapps")
     })
@@ -223,15 +228,8 @@ fn data_directory() -> PathBuf {
     if let Some(path) = std::env::var_os("LOCALAPPDATA") {
         return PathBuf::from(path);
     }
-    if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(path);
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".local").join("share");
-    }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
-
 
 /// Returns the private cache directory used for game names and cover art.
 pub(crate) fn cache_directory() -> PathBuf {
@@ -242,12 +240,6 @@ fn config_directory() -> PathBuf {
     #[cfg(target_os = "windows")]
     if let Some(path) = std::env::var_os("APPDATA") {
         return PathBuf::from(path);
-    }
-    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(path);
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".config");
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }

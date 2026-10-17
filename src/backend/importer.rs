@@ -97,7 +97,86 @@ pub(crate) fn import_files(
     }
 }
 
+/// Moves any orphaned `.lua` files (tracked in `entry.source_warning`)
+/// into the configured directory. Files are copied first, then removed
+/// from the source; if the target already holds an identical file the
+/// source is just deleted. If the target holds a *different* file with
+/// the same name, the orphan is left in place and reported.
+pub(crate) fn fix_orphan_entry(entry: &LibraryEntry) -> Result<usize, String> {
+    let Some(warning) = &entry.source_warning else {
+        return Err("This entry has no orphaned files to move.".into());
+    };
+    if warning.current_paths.is_empty() {
+        return Ok(0);
+    }
+    fs::create_dir_all(&warning.configured_dir).map_err(|error| {
+        format!(
+            "Could not create '{}': {error}",
+            warning.configured_dir.display()
+        )
+    })?;
+
+    let mut moved = 0usize;
+    let mut errors = Vec::new();
+    for source in &warning.current_paths {
+        if !source.is_file() {
+            continue;
+        }
+        let Some(filename) = source.file_name() else { continue };
+        let destination = warning.configured_dir.join(filename);
+        if destination.exists() {
+            if same_contents(source, &destination) {
+                match fs::remove_file(source) {
+                    Ok(()) => moved += 1,
+                    Err(error) => errors.push(format!(
+                        "Could not remove duplicate '{}': {error}",
+                        source.display()
+                    )),
+                }
+            } else {
+                errors.push(format!(
+                    "A different file named '{}' already exists in '{}'.",
+                    filename.to_string_lossy(),
+                    warning.configured_dir.display()
+                ));
+            }
+            continue;
+        }
+        match fs::copy(source, &destination) {
+            Ok(_) => {
+                if let Err(error) = fs::remove_file(source) {
+                    moved += 1;
+                    errors.push(format!(
+                        "Copied '{}' but could not remove the original: {error}",
+                        source.display()
+                    ));
+                } else {
+                    moved += 1;
+                }
+            }
+            Err(error) => errors.push(format!(
+                "Could not copy '{}': {error}",
+                source.display()
+            )),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(moved)
+    } else {
+        Err(format!(
+            "Moved {moved} file(s), with errors: {}",
+            errors.join("; ")
+        ))
+    }
+}
+
 /// Deletes only the selected entry's files from the configured local library folders.
+///
+/// Orphaned `.lua` files tracked in `entry.source_warning` are also
+/// removed: the scanner found them, so they are safe to delete, and
+/// removing an entry whose only lua is orphaned would otherwise leave
+/// the user unable to clean up.
 pub(crate) fn remove_entry(
     manifest_dir: &Path,
     lua_dir: &Path,
@@ -124,6 +203,22 @@ pub(crate) fn remove_entry(
             Ok(()) => removed += 1,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => errors.push(format!("Could not remove '{}': {error}", file.path.display())),
+        }
+    }
+
+    if let Some(warning) = &entry.source_warning {
+        for path in &warning.current_paths {
+            if !path.is_file() {
+                continue;
+            }
+            match fs::remove_file(path) {
+                Ok(()) => removed += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => errors.push(format!(
+                    "Could not remove orphaned '{}': {error}",
+                    path.display()
+                )),
+            }
         }
     }
 
