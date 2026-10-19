@@ -2,3 +2,5 @@ target/
 .cargo/
 dist/
 patch.bat
+docs/
+scripts/
