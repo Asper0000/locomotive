@@ -1,92 +1,155 @@
-# Locomotive
+<p align="center">
+  <img src="assets/icon.svg" width="160" height="160" alt="Locomotive logo">
+</p>
 
-Locomotive is a Windows desktop manager for local collections of Steam
-depot manifest files (`.manifest` / `.manifests`) and Lua files (`.lua`). It
-provides import staging, drag-and-drop, independently configurable local
-storage folders, automatic library scanning, grouping by inferred game name,
-and per-entry removal.
+<h1 align="center">Locomotive</h1>
 
-Locomotive copies selected files into the configured storage folders. When
-Steam is detected, the default destinations are Steam's `config/stplug-in`
-and `depotcache` folders; you can choose different folders in Options. The
-app does not install or uninstall games or change account entitlements.
-Removing an entry deletes only the matching manifest and Lua files in the
-configured folders; it does not remove installed game binaries.
+<p align="center">
+  <a href="#getting-started">
+    <img src="src/public/view-the-installation-guide.svg" height="50" alt="View the installation guide">
+  </a>
+</p>
+
+<p align="center">
+  <strong>An advanced game library manager built for connected tools.</strong><br>
+  Organize game-related files in one place, with an integration for <a href="https://github.com/Asper0000/rusty-tools">RustyTools</a> today and more project integrations planned for the future.
+</p>
+
+<p align="center">
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.85%2B-orange?logo=rust&logoColor=white" alt="Rust 1.85 or newer"></a>
+  <a href="https://github.com/iced-rs/iced"><img src="https://img.shields.io/badge/UI-Iced%200.14-555555" alt="Iced 0.14"></a>
+  <a href="https://www.microsoft.com/windows"><img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D6?logo=windows&logoColor=white" alt="Windows 10 and 11, 64-bit"></a>
+</p>
+
+---
+
+## Contents
+
+- [What is Locomotive?](#what-is-locomotive)
+- [Features](#features)
+- [Integrations](#integrations)
+- [How it works](#how-it-works)
+- [Privacy and security](#privacy-and-security)
+- [Getting started](#getting-started)
+- [Technical details](#technical-details)
+- [License](#license)
+
+---
+
+## What is Locomotive?
+
+**Locomotive** is an advanced desktop game library manager for organizing the local files and metadata used by game-related tools. Its first integration is with **RustyTools**, connecting its library to the manifest files and Lua scripts RustyTools works with while keeping everything organized by game.
+
+Import files through the native picker or drag them into the app, configure storage locations independently, and browse a consolidated library with game names and cover art where available. Locomotive tracks the files it manages and can identify Lua files that have been left behind when RustyTools is configured to use a different directory.
+
+RustyTools is the first integration, not the end goal. Locomotive is intended to expand to support other projects and tools over time, growing into a shared place to manage game-related libraries and their associated files.
+
+Locomotive manages a library; it is not a game installer or launcher. It does not install or uninstall games, change account entitlements, or execute Lua scripts.
+
+---
 
 ## Features
 
-- Choose multiple files through the native file picker or drag files into the window.
-- Supports `.manifest`, `.manifests`, and `.lua` extensions.
-- Copies imports into separate manifest and Lua storage folders; originals remain in place.
-- Prevents different files with the same name from overwriting each other.
-- Refreshes the library when opened and after imports, removals, or storage changes.
-- Groups files by game ID and uses local Steam metadata to show recognizable game names.
-- Shows compact Steam cover art cards with collapsed file lists and supports PNG artwork.
-- Caches cover art and game names; missing metadata can be resolved through the Steam Store App Details API, the public SteamCMD app-info API, and Steam image CDNs when `curl` and an internet connection are available.
-- Automatically dismisses operation notices; routine library refreshes stay silent.
-- Confirms before deleting a library entry and validates every path before removal.
-- Persists storage paths per user.
+- **Drag and drop or browse.** Import files through the native file picker or drop them into the window.
+- **Unified game library.** Keep supported game-related files organized into browsable entries grouped by game.
+- **RustyTools integration.** Align the library with RustyTools' configured Lua directory and the manifest files it uses.
+- **More integrations planned.** Locomotive is intended to support additional projects and tools beyond RustyTools as the project evolves.
+- **Manifest and Lua management.** Manage `.manifest`, `.manifests`, and `.lua` files in one library.
+- **Independent storage paths.** Choose separate destinations for manifest files and Lua scripts.
+- **Automatic library scanning.** Refreshes after imports, removals, and storage changes, then groups files using app IDs and depot references.
+- **Readable game cards.** Uses available local Steam metadata to show recognizable game names, with cover artwork where available.
+- **Misplaced Lua detection.** Flags relevant Lua files left in `config/stplug-in` when RustyTools is configured to read from a different directory, with an option to move them to the configured folder.
+- **Metadata and artwork caching.** Reuses local and cached data, with optional online lookups for missing names and covers.
+- **Safer removal.** Confirms destructive actions and validates paths before deleting tracked library files.
+- **Persistent settings.** Saves the configured storage locations for the current user.
 
-## Stack
+---
 
-- Rust, edition 2024
-- [Iced](https://github.com/iced-rs/iced) 0.14
-- Windows 10/11
+## Integrations
 
-## Building
+### RustyTools — available now
 
-See `docs/BUILD_INSTRUCTIONS.md` for prerequisites and packaging modes.
+Locomotive currently integrates with [RustyTools](https://github.com/Asper0000/rusty-tools), using its configured Lua directory as the source of truth and organizing related manifests and scripts into game entries. When files are left in RustyTools' previous default directory, Locomotive can flag them and offer to move them into the configured location.
 
-**Windows (Command Prompt or PowerShell)**
+### Other projects — planned
 
-From Command Prompt (`cmd.exe`), run the wrapper so PowerShell is launched
-explicitly:
+Locomotive is intended to grow beyond a single tool integration. Future integrations with other projects are planned, with the goal of making Locomotive a central library manager for supported game tools and their related files. These additional integrations are not available yet; the current integration and file handling are focused on RustyTools and Steam manifest/Lua workflows.
 
-```bat
-scripts\BUILD_WINDOWS.bat
-```
+---
 
-From PowerShell, run the script directly:
+## How it works
+
+Locomotive copies imported files to its configured destinations; the source files remain where they are. It then scans those destination folders and assembles the library into entries.
+
+| File type | Default destination when Steam is detected | How it is used |
+|---|---|---|
+| `.manifest` / `.manifests` | `<Steam>\depotcache` | Manifest files are grouped with Lua entries when their depot IDs can be matched. Unmatched manifests can still appear as their own entries. |
+| `.lua` | The `[lua] dir` in `<Steam>\rustytools.toml`; otherwise `<Steam>\config\stplug-in` | Lua files are read to identify app IDs and declared depot IDs for grouping. Locomotive does not run their code. |
+
+If Steam is not detected, Locomotive uses a private library under the current user's application-data directory. You can change both paths independently in **Options**.
+
+---
+
+## Privacy and security
+
+Locomotive is a local desktop application. Its settings and cached metadata are stored on your computer, and imported files are copied to the storage locations you configure. You do not need a Locomotive account or need to provide Steam account credentials to use the application.
+
+When local metadata is unavailable, optional game-name and artwork lookups may send requests to public Steam services and image CDNs. These lookups require an internet connection; the core library-management workflow does not depend on them.
+
+Locomotive does not execute imported Lua code. It reads relevant Lua declarations to identify game and depot IDs for library grouping. However, Lua files placed in a directory used by RustyTools are handled by RustyTools, not by Locomotive, so only import files from sources you trust.
+
+---
+
+## Getting started
+
+Locomotive targets **Windows 10/11 (64-bit)**. To build it from a clean checkout, install the following prerequisites:
+
+- **Rust stable 1.85 or newer**, installed through [rustup](https://rustup.rs).
+- **Git**, to clone the repository.
+- **Visual Studio Build Tools** with the *Desktop development with C++* workload and a Windows SDK. These provide the MSVC linker and Windows resource tools required for a Windows build.
+
+### Build from source
+
+Open a terminal and run:
 
 ```powershell
-.\scripts\BUILD_WINDOWS.ps1
+git clone https://github.com/Asper0000/locomotive.git
+cd locomotive
+cargo build --release
 ```
 
-The scripts check their prerequisites and place release output in `dist/`. `scripts\BUILD_WINDOWS.bat` is the Command Prompt entry point; it invokes the PowerShell script with a process-scoped execution-policy override and propagates the build exit code.
+Cargo downloads the required Rust dependencies and builds the optimized executable. Once the build completes, launch Locomotive with:
 
-## Storage and privacy
+```powershell
+.\target\release\locomotive.exe
+```
 
-When a Steam installation is detected, the default destinations are
-`<Steam>/config/stplug-in` for Lua files and `<Steam>/depotcache` for manifest
-files. Without a detected Steam installation, Locomotive uses a private library
-under the current user's application-data directory. The two destinations can
-be changed independently in Options. Saving a path does not move files that
-are already stored there; it applies to future imports.
+The executable is produced at `target\release\locomotive.exe`.
 
-Locomotive copies selected files to the configured destinations and removes
-only the matching manifest and Lua files represented by a library entry. It
-reads local Steam metadata to improve grouping and names. If
-a game name or cover is missing from local metadata, the app can query the
-public Steam Store and image CDN by AppID, with the public SteamCMD app-info API as a name fallback, then cache the result in the user's
-Locomotive data directory. This lookup does not require a Steam sign-in. If
-`curl` or internet access is unavailable, the app falls back to local metadata
-and any previously cached names or covers.
+---
 
-File drag-and-drop is not implemented by Iced on Wayland. On Linux, use an X11
-session if drag-and-drop is unavailable; the native file picker remains an
-alternative.
+## Technical details
 
-## Project structure
+- **Language:** Rust, edition 2024
+- **Minimum Rust version:** 1.85
+- **UI framework:** [Iced 0.14](https://github.com/iced-rs/iced)
+- **Target:** Windows 10/11, x86-64
+- **Architecture:** Elm-style separation between state, messages, update logic, views, and backend operations
 
-The application follows an Elm-style split: state, messages, update logic,
-backend operations, and view code each have dedicated modules. Filesystem
-operations are isolated in `src/backend/`; view functions only render state.
+Filesystem work is isolated in `src/backend/`. View code renders the current state, while update logic dispatches operations and handles their results. The interface uses a dark, monochrome theme centralized in `src/theme.rs`.
 
-## Design
-
-Dark-only, monochrome, and built around the existing UI. Colors and spacing
-are centralized in `src/theme.rs`.
+---
 
 ## License
 
-To be determined.
+Locomotive is licensed under the **GNU General Public License v3.0 only (GPL-3.0-only)**.
+
+You may use, study, modify, and redistribute Locomotive under the terms of GPLv3. If you distribute a modified version or a work based on Locomotive, you must comply with the license's applicable source-code and redistribution requirements.
+
+The full license text is included in [`LICENSE`](LICENSE). You can also read the [official GPLv3 text](https://www.gnu.org/licenses/gpl-3.0.html).
+
+---
+
+<p align="center">
+  <img src="src/public/built-with-deepseek.svg" alt="Built with DeepSeek">
+</p>
