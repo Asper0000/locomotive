@@ -38,11 +38,11 @@ pub const DANGER: Color = Color::from_rgb(0.706, 0.243, 0.208); // #B43E35
 // --- Metrics ----------------------------------------------------------------
 
 pub const TITLEBAR_HEIGHT: f32 = 40.0;
-pub const SIDEBAR_WIDTH: f32 = 200.0;
+pub const SIDEBAR_WIDTH: f32 = 170.0;
 pub const CORNER_RADIUS: f32 = 8.0;
-pub const RESIZE_BORDER: f32 = 6.0;
+pub const RESIZE_BORDER: f32 = 10.0;
 
-pub const SIDEBAR_LIBRARY_OFFSET: f32 = 12.0;
+pub const SIDEBAR_LIBRARY_OFFSET: f32 = 2.0;
 
 /// Font size for the Lucide glyphs in the sidebar.
 pub const NAV_ICON_SIZE: f32 = 20.0;
@@ -54,7 +54,7 @@ pub const NAV_ICON_SLOT: f32 = 24.0;
 pub const TITLEBAR_ICON_SIZE: f32 = 16.0;
 
 /// Rendered size of the brand mark in the titlebar.
-pub const BRAND_ICON_SIZE: f32 = 18.0;
+pub const BRAND_ICON_SIZE: f32 = 28.0;
 
 // --- Theme ------------------------------------------------------------------
 

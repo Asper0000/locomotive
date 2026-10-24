@@ -29,7 +29,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .size(11)
                     .color(theme::TEXT_MUTED),
                 Space::new().width(Length::Fill),
-                components::action_button("Refresh", Message::RefreshLibrary),
+                components::icon_button(lucide_icons::iced::icon_refresh_cw().size(16), Message::RefreshLibrary, 30.0),
             ]
             .align_y(Alignment::Center),
         )
@@ -91,12 +91,16 @@ fn entry_card(entry: LibraryEntry, expanded: bool, confirm: bool) -> Element<'st
     .spacing(5)
     .width(Length::Fill);
 
-    let toggle_label = if expanded { "Hide files  ^" } else { "Show files  v" };
+    let toggle_icon = if expanded {
+        lucide_icons::iced::icon_chevron_up().size(16)
+    } else {
+        lucide_icons::iced::icon_chevron_down().size(16)
+    };
     let header = row![
         cover_art(entry.cover_path.clone(), &entry.name),
         title_block,
         column![
-            components::action_button(toggle_label, Message::ToggleLibraryEntry(key.clone())),
+            components::icon_button(toggle_icon, Message::ToggleLibraryEntry(key.clone()), 30.0),
             if confirm {
                 components::danger_button("Delete files", Message::ConfirmRemove)
             } else {

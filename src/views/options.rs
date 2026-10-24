@@ -4,7 +4,7 @@ use iced::widget::{column, container, mouse_area, row, scrollable, stack, text, 
 use iced::{Alignment, Border, Color, Element, Length, Padding};
 
 use crate::message::Message;
-use crate::state::State;
+use crate::state::{State, View};
 use crate::theme;
 use crate::views::components;
 
@@ -42,7 +42,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         )
         .width(Length::Fill)
         .style(|_theme| container::Style {
-            background: Some(Color::from_rgb(0.7, 0.2, 0.2).into()), // Red warning
+            background: Some(Color::from_rgb(0.25, 0.05, 0.05).into()), // Red warning
             border: Border { color: Color::from_rgb(0.5, 0.1, 0.1), width: 1.0, radius: 6.0.into() },
             ..Default::default()
         })
@@ -91,6 +91,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         components::page_header("Options", 20.0),
         Space::new().height(Length::Fixed(10.0)),
         
+        if !state.rustytools_installed {
+            create_rustytools_banner()
+        } else {
+            Space::new().height(Length::Fixed(0.0)).into()
+        },
         status_bar,
         
         Space::new().height(Length::Fixed(10.0)),
@@ -204,6 +209,31 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .into();
 
     page
+}
+
+/// Shown only when RustyTools is missing from the Steam directory. The
+/// banner disappears automatically once installation completes because
+/// `state.rustytools_installed` flips to `true` in the update loop.
+fn create_rustytools_banner() -> Element<'static, Message> {
+    container(
+        row![
+            text("RustyTools not detected in your Steam directory. Games and DLCs will not be genuinely unlocked until it is installed.")
+                .size(12)
+                .color(Color::WHITE)
+                .width(Length::Fill),
+            components::action_button("Go to Setup", Message::Navigate(View::Setup)),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .padding(10)
+    )
+    .width(Length::Fill)
+    .style(|_theme| container::Style {
+        background: Some(Color::from_rgb(0.25, 0.05, 0.05).into()),
+        border: Border { color: Color::from_rgb(0.5, 0.1, 0.1), width: 1.0, radius: 6.0.into() },
+        ..Default::default()
+    })
+    .into()
 }
 
 pub fn storage_guide_overlay() -> Element<'static, Message> {

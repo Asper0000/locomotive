@@ -1,6 +1,7 @@
 //! Small, reusable widgets. Anything used on more than one screen belongs
 //! here rather than being duplicated into a view module.
 
+use iced::mouse;
 use iced::widget::{button, container, mouse_area, row, svg, text, Space};
 use iced::window::Direction;
 use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
@@ -11,12 +12,21 @@ use crate::state::View;
 use crate::theme;
 
 /// An invisible hit area that starts a native window resize when pressed.
+/// The cursor changes to the appropriate resize arrow while the pointer is
+/// over the zone, so the enlarged 10px border is discoverable.
 pub fn resize_zone(
     direction: Direction,
     width: Length,
     height: Length,
 ) -> Element<'static, Message> {
+    let interaction = match direction {
+        Direction::North | Direction::South => mouse::Interaction::ResizingVertically,
+        Direction::East | Direction::West => mouse::Interaction::ResizingHorizontally,
+        Direction::NorthWest | Direction::SouthEast => mouse::Interaction::ResizingDiagonallyDown,
+        Direction::NorthEast | Direction::SouthWest => mouse::Interaction::ResizingDiagonallyUp,
+    };
     mouse_area(Space::new().width(width).height(height))
+        .interaction(interaction)
         .on_press(Message::Resize(direction))
         .into()
 }
@@ -140,6 +150,7 @@ pub fn page_header(title: &'static str, size: f32) -> Element<'static, Message> 
 }
 
 /// A small all-caps label used to separate groups in the sidebar.
+#[allow(dead_code)]
 pub fn section_label(label: &'static str) -> Element<'static, Message> {
     container(text(label).size(10).color(theme::TEXT_MUTED))
         .padding(Padding {
@@ -184,6 +195,42 @@ pub fn danger_button(label: &'static str, message: Message) -> Element<'static, 
 }
 
 
+/// A compact square icon button. Used where a full text label would be
+/// too noisy but the action still needs to be reachable and discoverable.
+/// `size` is the edge length of the square, so caller decides between a
+/// compact 30 px control and a larger 36/40 px one.
+pub fn icon_button(
+    icon: impl Into<Element<'static, Message>>,
+    message: Message,
+    size: f32,
+) -> Element<'static, Message> {
+    let icon: Element<'static, Message> = icon.into();
+    button(
+        container(icon)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .padding(0)
+    .on_press(message)
+    .style(|_theme: &Theme, status| {
+        let hovered = matches!(status, button::Status::Hovered);
+        button::Style {
+            background: Some((if hovered { theme::BG_HOVER } else { theme::BG_SURFACE }).into()),
+            text_color: theme::TEXT_PRIMARY,
+            border: Border {
+                color: if hovered { theme::TEXT_SECONDARY } else { theme::BORDER },
+                width: 1.0,
+                radius: theme::CORNER_RADIUS.into(),
+            },
+            ..button::Style::default()
+        }
+    })
+    .into()
+}
 /// A compact square help control for contextual guidance that should stay out of the way.
 pub fn help_button(message: Message) -> Element<'static, Message> {
     button(

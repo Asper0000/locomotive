@@ -4,6 +4,7 @@
 pub mod about;
 pub mod components;
 pub mod dropzone;
+pub mod launcher;
 pub mod library;
 pub mod options;
 pub mod setup;
@@ -69,6 +70,9 @@ fn resize_handle(
 }
 
 fn body(state: &State) -> Element<'_, Message> {
+    if state.active_app.is_none() {
+        return launcher::view(state);
+    }
     let layout = row![
         sidebar::view(state),
         container(content(state))

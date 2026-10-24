@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use iced::window;
 
-use crate::state::{StorageKind, View, library_state::ImportOutcome};
+use crate::state::{LauncherApp, StorageKind, View, library_state::ImportOutcome};
 
 /// An event handled by the application update loop.
 #[derive(Debug, Clone)]
@@ -25,6 +25,10 @@ pub enum Message {
 
     /// Navigate to a screen.
     Navigate(View),
+    /// Open a launcher application, entering its workspace.
+    OpenApp(LauncherApp),
+    /// Return from an application workspace to the launcher card view.
+    ReturnToLauncher,
     /// Expand or collapse advanced options.
     ToggleAdvanced,
     /// Open the contextual storage guide.
@@ -88,7 +92,9 @@ pub enum Message {
     RefreshConfig,
     SetupInstall,
     SetupProgress(f32),
+    SetupStatus(String),
     SetupFinished(Result<(), String>),
+    LatestVersionFetched(Option<String>),
     RestartSteam,
     RemoveRustyTools,
 }

@@ -15,9 +15,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
     };
 
     let mut nav = column![
-        components::section_label("Workspace"),
-        Space::new().height(Length::Fixed(6.0)),
-        components::separator(),
         Space::new().height(Length::Fixed(theme::SIDEBAR_LIBRARY_OFFSET)),
     ].spacing(4);
 
@@ -55,9 +52,21 @@ pub fn view(state: &State) -> Element<'_, Message> {
         state.active_view == View::About,
     ));
 
+    let back_button = components::icon_button(
+        lucide_icons::iced::icon_arrow_left().size(16),
+        Message::ReturnToLauncher,
+        30.0,
+    );
+
     container(
-        column![nav, Space::new().height(Length::Fill)]
-            .height(Length::Fill),
+        column![
+            nav,
+            Space::new().height(Length::Fill),
+            container(back_button)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        ]
+        .height(Length::Fill),
     )
     .width(Length::Fixed(theme::SIDEBAR_WIDTH))
     .height(Length::Fill)

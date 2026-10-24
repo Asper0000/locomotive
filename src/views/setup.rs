@@ -19,11 +19,23 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     if let Some(progress) = state.setup_progress {
         if progress < 1.0 {
+            let install_title = state
+                .rustytools_latest_version
+                .as_deref()
+                .map(|v| format!("Installing RustyTools {v}..."))
+                .unwrap_or_else(|| "Installing RustyTools (Latest)...".to_owned());
+            let status_line = state
+                .setup_status
+                .clone()
+                .unwrap_or_else(|| "Starting".to_owned());
+            let percent = format!("{}%", (progress * 100.0) as u32);
             content = content.push(
                 components::card(column![
-                    center_text("Installing RustyTools...", 16.0, theme::TEXT_PRIMARY),
+                    center_text(&install_title, 16.0, theme::TEXT_PRIMARY),
                     Space::new().height(Length::Fixed(10.0)),
-                    center_text(&format!("{}%", (progress * 100.0) as u32), 12.0, theme::TEXT_SECONDARY),
+                    center_text(&status_line, 12.0, theme::TEXT_SECONDARY),
+                    Space::new().height(Length::Fixed(4.0)),
+                    center_text(&percent, 11.0, theme::TEXT_MUTED),
                     Space::new().height(Length::Fixed(10.0)),
                     iced::widget::progress_bar(0.0..=1.0, progress),
                 ].spacing(5).align_x(Alignment::Center).width(Length::Fill))
@@ -74,11 +86,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ].spacing(5).align_x(Alignment::Center).width(Length::Fill))
         );
     } else {
+        let install_title = state
+            .rustytools_latest_version
+            .as_deref()
+            .map(|v| format!("Install RustyTools {v}"))
+            .unwrap_or_else(|| "Install RustyTools (Latest)".to_owned());
         content = content.push(
             components::card(column![
-                center_text("Install RustyTools", 16.0, theme::TEXT_PRIMARY),
+                center_text(&install_title, 16.0, theme::TEXT_PRIMARY),
                 Space::new().height(Length::Fixed(10.0)),
-                center_text("RustyTools is required to unlock games in Steam. It was not detected in your Steam installation directory.", 12.0, theme::TEXT_SECONDARY),
+                center_text("RustyTools is optional, but necessary for games and DLCs to be genuinely unlocked. Without it, you can still import .manifest and .lua files and manage your library fully.", 12.0, theme::TEXT_SECONDARY),
                 Space::new().height(Length::Fixed(20.0)),
                 components::primary_button("Download & Install", Message::SetupInstall),
             ].spacing(5).align_x(Alignment::Center).width(Length::Fill))

@@ -37,6 +37,14 @@ pub fn handle(state: &mut State, message: Message) -> Task<Message> {
         Message::StartDrag => with_window(iced_window::drag),
         Message::Resize(direction) => with_window(move |id| iced_window::drag_resize(id, direction)),
         Message::WindowEvent(event) => window::handle_event(state, event),
+        Message::OpenApp(app) => {
+            state.active_app = Some(app);
+            Task::none()
+        }
+        Message::ReturnToLauncher => {
+            state.active_app = None;
+            Task::none()
+        }
         Message::Navigate(view) => {
             state.active_view = view;
             if view == View::Library && !state.is_refreshing_library {
@@ -310,6 +318,14 @@ register_scheme = false
             state.setup_progress = Some(p);
             Task::none()
         }
+        Message::SetupStatus(status) => {
+            state.setup_status = Some(status);
+            Task::none()
+        }
+        Message::LatestVersionFetched(version) => {
+            state.rustytools_latest_version = version;
+            Task::none()
+        }
         Message::SetupFinished(res) => {
             match res {
                 Ok(_) => {
@@ -321,6 +337,7 @@ register_scheme = false
                 Err(e) => {
                     state.setup_error = Some(e);
                     state.setup_progress = None;
+                    state.setup_status = None;
                     Task::none()
                 }
             }

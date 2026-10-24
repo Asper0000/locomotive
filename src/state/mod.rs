@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use iced::Subscription;
 
-use crate::backend::{archive, library};
+use crate::backend::archive;
 use crate::message::Message;
 
 pub mod library_state;
@@ -61,6 +61,13 @@ impl FileKind {
     }
 }
 
+/// The applications available in the launcher card grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LauncherApp {
+    /// The Steam integration workspace.
+    Steam,
+}
+
 /// A source file staged for import into the local library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingFile {
@@ -82,8 +89,10 @@ pub enum StorageKind {
 /// All mutable application state used by the Elm-style update/view flow.
 #[derive(Debug)]
 pub struct State {
-    /// Currently visible screen.
+    /// Currently visible screen inside an application workspace.
     pub active_view: View,
+    /// Currently open launcher app, or `None` while the card grid is shown.
+    pub active_app: Option<LauncherApp>,
     /// Files awaiting import.
     pub pending_files: Vec<PendingFile>,
     /// Whether the pointer is carrying a file over the window.
@@ -95,8 +104,12 @@ pub struct State {
     pub rustytools_installed: bool,
     pub steam_root: Option<PathBuf>,
     pub setup_progress: Option<f32>,
+    /// Human-readable status line shown while the setup progress bar is animating.
+    pub setup_status: Option<String>,
     pub setup_error: Option<String>,
     pub steam_was_running: bool,
+    /// Latest RustyTools release tag fetched from GitHub, when available.
+    pub rustytools_latest_version: Option<String>,
 
     /// Folder where manifest copies are stored.
     pub manifest_dir: String,
@@ -130,7 +143,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         let settings = archive::load_settings();
-        let snapshot = library::scan(&settings.manifest_dir, &settings.lua_dir);
+        // Library scan is deferred to the boot task so the first render never shows stale entries.
         let lua_dir_str = settings.lua_dir.to_string_lossy().into_owned();
         
         let config_exists = crate::backend::steam::discover_root()
@@ -143,11 +156,14 @@ impl Default for State {
 
         Self {
             active_view,
+            active_app: None,
             rustytools_installed,
             steam_root,
             setup_progress: None,
+            setup_status: None,
             setup_error: None,
             steam_was_running: false,
+            rustytools_latest_version: None,
             pending_files: Vec::new(),
             is_drag_over: false,
             advanced_open: false,
@@ -158,7 +174,7 @@ impl Default for State {
             config_exists,
             lua_dir_draft: lua_dir_str,
 
-            library: snapshot,
+            library: library_state::LibrarySnapshot::default(),
             notice: None,
             confirm_remove: None,
             is_importing: false,

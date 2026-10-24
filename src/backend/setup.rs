@@ -4,6 +4,47 @@ use iced::stream;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+/// Fetches the latest RustyTools release tag from the public GitHub API.
+/// Returns `None` when curl is unavailable, the request fails, or the
+/// response does not contain a recognizable version string.
+pub fn fetch_latest_version() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("curl.exe");
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = std::process::Command::new("curl");
+    cmd.args([
+        "--fail",
+        "--location",
+        "--silent",
+        "--show-error",
+        "--connect-timeout", "3",
+        "--max-time", "6",
+        "--header", "User-Agent: Locomotive/0.0.1",
+        "https://api.github.com/repos/Asper0000/rusty-tools/releases/latest",
+    ]);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(crate::backend::steam::CREATE_NO_WINDOW);
+    let output = cmd.output().ok().filter(|o| o.status.success())?;
+    let body = String::from_utf8(output.stdout).ok()?;
+    if let Some(tag) = super::artwork_json::json_string_for_key(&body, "tag_name") {
+        let tag = tag.trim().to_owned();
+        if !tag.is_empty() {
+            return Some(tag);
+        }
+    }
+    // Fallback: release titles look like "v0.0.2 RustyTools". Take the
+    // first whitespace-delimited token when it looks like a version.
+    super::artwork_json::json_string_for_key(&body, "name").and_then(|name| {
+        let name = name.trim();
+        let first = name.split_whitespace().next()?;
+        if first.starts_with('v') || first.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            Some(first.to_owned())
+        } else {
+            None
+        }
+    })
+}
+
 pub fn is_installed(steam_root: &Path) -> bool {
     steam_root.join("RustyTools.dll").exists()
 }
@@ -46,22 +87,26 @@ pub fn download_and_install(steam_root: PathBuf) -> impl iced::futures::Stream<I
 
         std::thread::spawn(move || {
             let mut tx = tx;
-            let _ = tx.try_send(crate::message::Message::SetupProgress(0.05));
-            std::thread::sleep(std::time::Duration::from_millis(400));
+            let _ = tx.try_send(crate::message::Message::SetupProgress(0.03));
+            let _ = tx.try_send(crate::message::Message::SetupStatus("Preparing installation".into()));
+            std::thread::sleep(std::time::Duration::from_millis(150));
+
+            let _ = tx.try_send(crate::message::Message::SetupProgress(0.08));
+            let _ = tx.try_send(crate::message::Message::SetupStatus("Downloading release from GitHub".into()));
 
             #[cfg(target_os = "windows")]
             {
                 let temp_dir = std::env::temp_dir().join("locomotive_setup");
                 let _ = std::fs::create_dir_all(&temp_dir);
                 let zip_path = temp_dir.join("release.zip");
-                
+
                 let url = "https://github.com/Asper0000/rusty-tools/releases/latest/download/release.zip";
 
                 // 1. Download
                 let mut cmd = std::process::Command::new("curl.exe");
                 cmd.creation_flags(crate::backend::steam::CREATE_NO_WINDOW);
                 let output = cmd.args(["-L", "-s", "-o", zip_path.to_str().unwrap(), url]).output();
-                
+
                 match output {
                     Ok(out) if !out.status.success() => {
                         let err = String::from_utf8_lossy(&out.stderr);
@@ -76,6 +121,10 @@ pub fn download_and_install(steam_root: PathBuf) -> impl iced::futures::Stream<I
                     _ => {}
                 }
 
+                let size_kb = std::fs::metadata(&zip_path).map(|m| m.len() / 1024).unwrap_or(0);
+                let _ = tx.try_send(crate::message::Message::SetupProgress(0.35));
+                let _ = tx.try_send(crate::message::Message::SetupStatus(format!("Downloaded {size_kb} KB  verifying archive")));
+
                 // 1.5 Verify it's actually a ZIP (magic bytes 'PK')
                 if let Ok(bytes) = std::fs::read(&zip_path) {
                     if bytes.len() < 2 || &bytes[0..2] != b"PK" {
@@ -89,8 +138,9 @@ pub fn download_and_install(steam_root: PathBuf) -> impl iced::futures::Stream<I
                     return;
                 }
 
-                let _ = tx.try_send(crate::message::Message::SetupProgress(0.4));
-                std::thread::sleep(std::time::Duration::from_millis(400));
+                let _ = tx.try_send(crate::message::Message::SetupProgress(0.45));
+                let _ = tx.try_send(crate::message::Message::SetupStatus("Extracting archive and copying DLLs".into()));
+                std::thread::sleep(std::time::Duration::from_millis(150));
 
                 // 2. Extract AND copy DLLs using PowerShell
                 let ps_script = format!(
@@ -102,7 +152,7 @@ pub fn download_and_install(steam_root: PathBuf) -> impl iced::futures::Stream<I
                 ps.creation_flags(crate::backend::steam::CREATE_NO_WINDOW);
                 ps.args(["-NoProfile", "-Command", &ps_script]);
                 let output = ps.output();
-                
+
                 match output {
                     Ok(out) if !out.status.success() => {
                         let err = String::from_utf8_lossy(&out.stderr);
@@ -115,9 +165,9 @@ pub fn download_and_install(steam_root: PathBuf) -> impl iced::futures::Stream<I
                     }
                     _ => {}
                 }
-                
-                let _ = tx.try_send(crate::message::Message::SetupProgress(0.7));
-                std::thread::sleep(std::time::Duration::from_millis(400));
+
+                let _ = tx.try_send(crate::message::Message::SetupProgress(0.70));
+                let _ = tx.try_send(crate::message::Message::SetupStatus("Verifying RustyTools.dll".into()));
 
                 // 3. Verify it actually copied
                 if !root.join("RustyTools.dll").exists() {
@@ -125,11 +175,13 @@ pub fn download_and_install(steam_root: PathBuf) -> impl iced::futures::Stream<I
                     return;
                 }
 
+                let _ = tx.try_send(crate::message::Message::SetupProgress(0.88));
+                let _ = tx.try_send(crate::message::Message::SetupStatus("Cleaning up temporary files".into()));
                 let _ = std::fs::remove_dir_all(&temp_dir);
-                let _ = tx.try_send(crate::message::Message::SetupProgress(0.9));
-                std::thread::sleep(std::time::Duration::from_millis(400));
+                std::thread::sleep(std::time::Duration::from_millis(200));
 
                 let _ = tx.try_send(crate::message::Message::SetupProgress(1.0));
+                let _ = tx.try_send(crate::message::Message::SetupStatus("Installation complete.".into()));
                 let _ = tx.try_send(crate::message::Message::SetupFinished(Ok(())));
             }
         });
